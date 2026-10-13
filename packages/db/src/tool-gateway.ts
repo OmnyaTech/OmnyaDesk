@@ -7,6 +7,7 @@ import {UuidSchema} from '../../contracts/src/domain.ts';
 import {RemoteWorktreeManager} from './remote-worktrees.ts';
 import {UbuntuDockerSandbox} from './remote-docker-sandbox.ts';
 import {quoteRemote} from './remote-ubuntu.ts';
+import {EvidenceLedger} from './evidence-ledger.ts';
 
 export class ToolDenied extends Error {readonly status=403;}
 export class ToolUnavailable extends Error {readonly status=409;}
@@ -35,7 +36,8 @@ export const ToolRequestSchema=z.discriminatedUnion('tool',[
  Base.extend({tool:z.literal('tests.run'),suite:z.literal('entry')})
 ]);
 export type ToolRequest=z.input<typeof ToolRequestSchema>;
-export type ToolReply={tool:string;success:boolean;result:unknown;durationMs:number};
+export type ToolReply={tool:string;success:boolean;result:unknown;durationMs:number;
+ evidence:{id:string;version:number;sha256:string}};
 type Parsed=z.output<typeof ToolRequestSchema>;
 const fileScript=fileURLToPath(new URL('../../../scripts/remote-tool-files.py',import.meta.url));
 const hashes=(text:string)=>createHash('sha256').update(text).digest('hex');
@@ -61,8 +63,10 @@ export class UbuntuToolGateway{
  private readonly pool:Pool;
  private readonly manager:RemoteWorktreeManager;
  private readonly docker:UbuntuDockerSandbox;
+ private readonly evidence:EvidenceLedger;
  constructor(pool:Pool,manager:RemoteWorktreeManager){
   this.pool=pool;this.manager=manager;this.docker=new UbuntuDockerSandbox(manager);
+  this.evidence=new EvidenceLedger(pool);
   if(!existsSync(fileScript))throw new ToolUnavailable('Trusted helper not available');
  }
  private async authorize(r:Parsed):Promise<string>{
@@ -149,7 +153,19 @@ export class UbuntuToolGateway{
     [r.projectId,r.taskId,r.workerId,r.leaseToken,r.fence]);
    if(!state.rowCount)throw new ToolDenied('S10 fencing changed during test run');
   }else await this.authorize(r);
-  return {tool:r.tool,success:r.tool==='tests.run'?
-   (result as {exitCode:number}).exitCode===0:true,result,durationMs:Date.now()-start};
+  const success=r.tool==='tests.run'?(result as {exitCode:number}).exitCode===0:true;
+  // Record only bounded tool output or a content-free receipt for file reads.
+  // No lease token, SSH details, file contents or credentials enter metadata.
+  const kind=r.tool==='git.diff'?'diff':r.tool==='files.write'?'artifact':'log';
+  const content=r.tool==='git.diff'||r.tool==='git.status'
+   ?(result as {text:string}).text
+   :r.tool==='tests.run'||r.tool==='files.write'
+    ?JSON.stringify(result)
+    :JSON.stringify({operation:r.tool,path:r.path,receiptSha256:hashes(JSON.stringify(result))});
+  const record=await this.evidence.append({projectId:r.projectId,taskId:r.taskId,
+   runId:r.runId,kind,scopeKey:'tool:'+r.tool.replace('.','-')+':'+r.runId,
+   actorId:r.workerId,content,metadata:{tool:r.tool,success,fence:r.fence}});
+  return {tool:r.tool,success,result,durationMs:Date.now()-start,
+   evidence:{id:record.id,version:record.version,sha256:record.contentSha256}};
  }
 }

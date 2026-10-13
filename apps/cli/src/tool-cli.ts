@@ -14,6 +14,6 @@ try{
  await runMigrations(pool);
  const result=await new UbuntuToolGateway(pool,new RemoteWorktreeManager(pool,ssh)).run(request);
  console.log(JSON.stringify({tool:result.tool,success:result.success,durationMs:result.durationMs,
-  result:result.result}));
+  result:result.result,evidence:result.evidence}));
  if(!result.success)process.exitCode=1;
 }finally{ssh.close();await pool.end();}

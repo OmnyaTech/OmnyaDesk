@@ -12,6 +12,7 @@ import {ResourceScheduler,type Claim} from '../packages/db/src/scheduler.ts';
 import {RemoteWorktreeManager} from '../packages/db/src/remote-worktrees.ts';
 import {UbuntuSshTransport,quoteRemote} from '../packages/db/src/remote-ubuntu.ts';
 import {UbuntuToolGateway,ToolDenied,ToolRequestSchema} from '../packages/db/src/tool-gateway.ts';
+import {EvidenceLedger} from '../packages/db/src/evidence-ledger.ts';
 
 const enabled=!!process.env.DATABASE_URL&&!!process.env.OMNYA_S12_REMOTE_CONFIG;
 let db:Pool,repo:PostgresOfficeRepository,scheduler:ResourceScheduler,manager:RemoteWorktreeManager,
@@ -83,7 +84,7 @@ test('S13 strict tool schema denies arbitrary commands, switches and escape path
   {...base,tool:'files.write',path:'README.md',content:'x',expectedSha:'absent',command:'echo'},
   ...['../host.txt','/etc/passwd','docs/../../secret.md','.git/config','docs/.env',
      'docs//a.md','docs/%2e%2e/a.md','docs\\evil.md','-c.md','README.md;id',
-     'entry.sh','/home/test-user/blocked/example.txt','src/./x.md','docs/a.sh'].map(path=>
+     'entry.sh','/tmp/disposable-fixture/id_ed25519','src/./x.md','docs/a.sh'].map(path=>
     ({...base,tool:'files.read',path})),
   {...base,tool:'files.write',path:'README.md',content:'A'.repeat(16385),expectedSha:'absent'}
  ];
@@ -104,6 +105,19 @@ test('S13 read-only Git + files gateway works on actual Ubuntu worktree',{skip:!
   assert.equal((status.result as {text:string}).text,'');
   const diff=await gateway.run(f.request('git.diff',{path:'README.md'}) as never);
   assert.equal((diff.result as {text:string}).text,'');
+  const ledger=new EvidenceLedger(db);
+  for(const [reply,kind,scope] of [
+   [root,'log','tool:files-list:'],[read,'log','tool:files-read:'],
+   [status,'log','tool:git-status:'],[diff,'diff','tool:git-diff:']
+  ] as const){
+   const record=await ledger.read(f.projectId,f.taskId,reply.evidence.id);
+   assert.equal(record.runId,f.runId);
+   assert.equal(record.kind,kind);
+   assert.equal(record.scopeKey,scope+f.runId);
+   assert.equal(record.contentSha256,reply.evidence.sha256);
+   assert.equal((await ledger.verify(f.projectId,f.taskId,kind,scope+f.runId)).count>=1,true);
+  }
+  assert.equal((await ledger.verify(f.projectId,f.taskId,'log','tool:files-read:'+f.runId)).count,2);
  }finally{await f.close();}
 });
 test('S13 write uses scoped CAS, rejects stale/version mismatch and Git remains unmerged',{skip:!enabled},async()=>{

@@ -9,7 +9,7 @@ const POLICY='s11-combined-readonly-v1';
 export class GitValidationError extends Error {}
 export type CombinedCheck={name:string;passed:boolean};
 export type PreparedGit={targetHead:string;candidateSha:string;tree:string;commit:string;
- reviewHash:string;checks:CombinedCheck[]};
+ reviewHash:string;diff:string;diffSha256:string;checks:CombinedCheck[]};
 export function validSha(value:string):boolean{return SHA.test(value);}
 export function validRef(value:string):boolean{
  return REF.test(value)&&!value.includes('//')&&!value.includes('..')&&
@@ -79,7 +79,9 @@ export class BareGitIntegration{
   if(this.exec(['rev-parse',head+'^{tree}']).trim()===tree)
    throw new GitValidationError('Merged candidate produces no change');
   const checks=this.validateCombined(head,tree);
-  const payload=JSON.stringify({policy:POLICY,requestId,head,baseSha,candidateSha,tree,checks});
+  const diff=this.reviewDiff(head,tree);
+  const diffSha256=createHash('sha256').update(diff).digest('hex');
+  const payload=JSON.stringify({policy:POLICY,requestId,head,baseSha,candidateSha,tree,diffSha256,checks});
   const reviewHash=createHash('sha256').update(payload).digest('hex');
   const date=new Date(stableDate).toISOString();
   const commit=this.exec(['commit-tree',tree,'-p',head,'-p',candidateSha,
@@ -87,7 +89,13 @@ export class BareGitIntegration{
     env:{GIT_AUTHOR_DATE:date,GIT_COMMITTER_DATE:date}
    }).trim();
   if(!validSha(commit))throw new GitValidationError('Invalid planned commit');
-  return {targetHead:head,candidateSha,tree,commit,reviewHash,checks};
+  return {targetHead:head,candidateSha,tree,commit,reviewHash,diff,diffSha256,checks};
+ }
+ reviewDiff(head:string,tree:string):string{
+  if(!validSha(head)||!validSha(tree))throw new GitValidationError('Invalid review diff objects');
+  const diff=this.exec(['diff','--no-ext-diff','--no-textconv','--binary',head,tree],{max:72*1024});
+  if(Buffer.byteLength(diff,'utf8')>65536)throw new GitValidationError('Review diff exceeds 64KiB; split proposal');
+  return diff;
  }
  private validateCombined(head:string,tree:string):CombinedCheck[]{
   const check=this.output(['diff','--check',head,tree]);

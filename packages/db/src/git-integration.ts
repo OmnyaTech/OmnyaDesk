@@ -1,9 +1,10 @@
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import type {Pool,PoolClient} from 'pg';
 import {z} from 'zod';
 import {UuidSchema} from '../../contracts/src/domain.ts';
 import type {AuthPrincipal,ApiScope} from './tokens.ts';
 import {BareGitIntegration,GitValidationError,validRef,validSha} from './git-driver.ts';
+import {EvidenceLedger,EvidenceIntegrityError} from './evidence-ledger.ts';
 
 export const GitProposalSchema=z.strictObject({
  projectId:UuidSchema,taskId:UuidSchema,candidateRef:z.string().max(180),
@@ -21,12 +22,14 @@ type Row={
  candidate_ref:string;candidate_sha:string;base_sha:string;
  state:string;priority:number;created_at:Date;reviewed_head:string|null;
  tested_tree:string|null;planned_commit:string|null;review_sha256:string|null;
+ review_evidence_id:string|null;
  approved_by:string|null;approved_at:Date|null;merged_at:Date|null;
  validation_json:unknown
 };
 export class GitIntegrationQueue{
  private readonly pool:Pool;
- constructor(pool:Pool){this.pool=pool;}
+ private readonly evidence:EvidenceLedger;
+ constructor(pool:Pool){this.pool=pool;this.evidence=new EvidenceLedger(pool);}
  private actor(principal:AuthPrincipal,projectId:string,scope:ApiScope){
   if(principal.projectId!==projectId)throw new IntegrationNotFound('Project not found');
   if(!principal.scopes.includes(scope))throw new IntegrationForbidden('Scope not granted');
@@ -96,23 +99,47 @@ export class GitIntegrationQueue{
    catch(e){nextState=e instanceof GitValidationError&&String(e.message).includes('merge conflict')?'conflict':'tests_failed';}
    if(!prepared){
     await c.query("UPDATE git_integration_requests SET state=$3,reviewed_head=NULL,tested_tree=NULL,"+
-      'planned_commit=NULL,review_sha256=NULL,approved_by=NULL,approved_at=NULL,'+
+      'planned_commit=NULL,review_sha256=NULL,review_evidence_id=NULL,approved_by=NULL,approved_at=NULL,'+
       'validation_json=$4::jsonb,updated_at=now() WHERE project_id=$1 AND id=$2',
      [projectId,id,nextState,JSON.stringify({ok:false,reason:'candidate conflict or combined checks did not pass'})]);
     await this.audit(c,projectId,id,'blocked',principal.subjectId,{state:nextState});
     return {id,state:nextState};
    }
+   const snapshot=await this.evidence.appendTx(c,{
+    projectId,taskId:row.task_id,runId:null,kind:'review_diff',
+    scopeKey:'git-review:'+id,actorId:principal.subjectId,content:prepared.diff,
+    metadata:{reviewHash:prepared.reviewHash,targetHead:prepared.targetHead,
+     testedTree:prepared.tree,plannedCommit:prepared.commit}
+   });
+   if(snapshot.contentSha256!==prepared.diffSha256)throw new EvidenceIntegrityError('Stored diff mismatch');
    await c.query("UPDATE git_integration_requests SET state='ready',reviewed_head=$3,tested_tree=$4,"+
-     'planned_commit=$5,review_sha256=$6,approved_by=NULL,approved_at=NULL,'+
-     'validation_json=$7::jsonb,updated_at=now() WHERE project_id=$1 AND id=$2',
+     'planned_commit=$5,review_sha256=$6,review_evidence_id=$7,approved_by=NULL,approved_at=NULL,'+
+     'validation_json=$8::jsonb,updated_at=now() WHERE project_id=$1 AND id=$2',
     [projectId,id,prepared.targetHead,prepared.tree,prepared.commit,prepared.reviewHash,
-     JSON.stringify({ok:true,checks:prepared.checks})]);
+     snapshot.id,JSON.stringify({ok:true,checks:prepared.checks,diffSha256:prepared.diffSha256})]);
    await this.audit(c,projectId,id,'prepared',principal.subjectId,
     {targetHead:prepared.targetHead,tree:prepared.tree,reviewHash:prepared.reviewHash,
      checks:prepared.checks});
    return {id,state:'ready',targetHead:prepared.targetHead,testedTree:prepared.tree,
-    reviewHash:prepared.reviewHash,checks:prepared.checks};
+    reviewHash:prepared.reviewHash,diff:prepared.diff,diffSha256:prepared.diffSha256,
+    evidenceId:snapshot.id,checks:prepared.checks};
   });
+ }
+ private async verifiedReview(c:PoolClient,git:BareGitIntegration,row:Row){
+  if(!row.review_evidence_id||!row.reviewed_head||!row.tested_tree||!row.review_sha256||
+     !row.planned_commit)
+   throw new IntegrationConflict('Immutable diff evidence missing; prepare again before review');
+  const e=await this.evidence.read(row.project_id,row.task_id,row.review_evidence_id,c);
+  const scope='git-review:'+row.id;
+  if(e.kind!=='review_diff'||e.scopeKey!==scope||e.metadata.reviewHash!==row.review_sha256||
+     e.metadata.targetHead!==row.reviewed_head||
+     e.metadata.testedTree!==row.tested_tree||e.metadata.plannedCommit!==row.planned_commit)
+   throw new EvidenceIntegrityError('Review evidence does not match prepared proposal');
+  // Same exact tree and HEAD produce the exact bytes that were displayed for approval.
+  const actual=git.reviewDiff(row.reviewed_head,row.tested_tree);
+  if(createHash('sha256').update(actual).digest('hex')!==e.contentSha256||actual!==e.content)
+   throw new EvidenceIntegrityError('Displayed diff differs from immutable reviewed artifact');
+  return e;
  }
  async approve(projectId:string,id:string,reviewHash:string,principal:AuthPrincipal){
   UuidSchema.parse(projectId);UuidSchema.parse(id);
@@ -124,13 +151,20 @@ export class GitIntegrationQueue{
    if(row.approved_by)throw new IntegrationConflict('Proposal already reviewed; reprepare for a new review');
    if(row.state!=='ready'||row.review_sha256!==reviewHash||row.submitter_id===principal.subjectId)
     throw new IntegrationConflict('Proposal not reviewable by this human with this hash');
+   const snapshot=await this.verifiedReview(c,git,row);
    if(git.head()!==row.reviewed_head)throw new IntegrationConflict('Base moved, reprepare before approval');
    try{git.verifyCandidate(row.candidate_ref,row.base_sha,row.candidate_sha);}
    catch{throw new IntegrationConflict('Candidate changed, reprepare before approval');}
    await c.query(
     'UPDATE git_integration_requests SET approved_by=$3,approved_at=now(),updated_at=now() WHERE project_id=$1 AND id=$2',
     [projectId,id,principal.subjectId]);
-   await this.audit(c,projectId,id,'approved',principal.subjectId,{reviewHash});
+   await this.evidence.appendTx(c,{projectId,taskId:row.task_id,runId:null,
+    kind:'review_approval',scopeKey:'git-approval:'+id,actorId:principal.subjectId,
+    content:JSON.stringify({reviewHash,evidenceId:snapshot.id,diffSha256:snapshot.contentSha256,
+     plannedCommit:row.planned_commit}),metadata:{reviewEvidenceId:snapshot.id}
+   });
+   await this.audit(c,projectId,id,'approved',principal.subjectId,
+    {reviewHash,evidenceId:snapshot.id,diffSha256:snapshot.contentSha256});
    return {id,approved:true,reviewHash,approvedBy:principal.subjectId};
   });
  }
@@ -138,10 +172,14 @@ export class GitIntegrationQueue{
   UuidSchema.parse(projectId);UuidSchema.parse(id);this.actor(principal,projectId,'git:integrate');
   return this.locked(projectId,principal,'git:integrate',async(c,git)=>{
    const row=await this.read(c,projectId,id);
-   if(row.state==='merged')return {id,state:'merged',commit:row.planned_commit,replayed:true};
+   if(row.state==='merged'){
+    await this.verifiedReview(c,git,row);
+    return {id,state:'merged',commit:row.planned_commit,replayed:true};
+   }
    if(row.state!=='ready'||!row.approved_by||!row.approved_at||!row.planned_commit||
       !row.reviewed_head||!row.review_sha256||!row.tested_tree)
     throw new IntegrationConflict('Verified human approval required before merge');
+   await this.verifiedReview(c,git,row);
    if(git.head()===row.planned_commit){
     await c.query("UPDATE git_integration_requests SET state='merged',merged_at=now(),updated_at=now() WHERE project_id=$1 AND id=$2",[projectId,id]);
     await this.audit(c,projectId,id,'merged',principal.subjectId,{recovered:true,commit:row.planned_commit});
@@ -182,10 +220,23 @@ export class GitIntegrationQueue{
    'SELECT * FROM git_integration_requests WHERE project_id=$1 AND id=$2',[projectId,id]);
   if(!r.rowCount)throw new IntegrationNotFound('Integration request not found');
   const x=r.rows[0]!;
+  let review:null|{evidenceId:string;diff:string;diffSha256:string;version:number}=null;
+  if(x.state==='ready'||x.state==='merged'){
+   const source=await this.pool.query<{repository_root:string|null}>(
+    'SELECT repository_root FROM projects WHERE id=$1',[projectId]);
+   if(!source.rows[0]?.repository_root)throw new IntegrationConflict('Cannot verify review Git source');
+   const git=new BareGitIntegration(source.rows[0]!.repository_root!);
+   const client=await this.pool.connect();
+   try{
+    const snapshot=await this.verifiedReview(client,git,x);
+    review={evidenceId:snapshot.id,diff:snapshot.content,diffSha256:snapshot.contentSha256,
+     version:snapshot.version};
+   }finally{client.release();}
+  }
   return {id:x.id,projectId,taskId:x.task_id,state:x.state,priority:x.priority,
    candidateRef:x.candidate_ref,candidateSha:x.candidate_sha,baseSha:x.base_sha,
    targetHead:x.reviewed_head,testedTree:x.tested_tree,reviewHash:x.review_sha256,
-   approvedBy:x.approved_by,mergedCommit:x.state==='merged'?x.planned_commit:null,checks:x.validation_json};
+   review,approvedBy:x.approved_by,mergedCommit:x.state==='merged'?x.planned_commit:null,checks:x.validation_json};
  }
  async list(projectId:string,principal:AuthPrincipal){
   UuidSchema.parse(projectId);this.actor(principal,projectId,'tasks:read');
