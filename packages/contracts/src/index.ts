@@ -32,23 +32,5 @@ export interface OfficeEvent {
   message: string;
 }
 
-// Contrato proposto para a futura camada de provedores. Nenhum provider real está plugado.
-export interface AgentExecutionRequest {
-  taskId: string;
-  role: Exclude<AgentRole, 'system' | 'user'>;
-  prompt: string;
-  workspacePath: string;
-  maxSteps: number;
-  maxCostUsd: number;
-}
-
-export interface AgentExecutionResult {
-  output: string;
-  artifacts: Array<{ path: string; sha256: string }>;
-  usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
-}
-
-export interface AgentProvider {
-  readonly id: string;
-  run(request: AgentExecutionRequest, signal: AbortSignal): Promise<AgentExecutionResult>;
-}
+// S16: provider-neutral contract with validated events, budgets and cancellation.
+export * from './provider.ts';

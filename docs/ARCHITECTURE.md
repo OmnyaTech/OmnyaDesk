@@ -94,7 +94,7 @@ O evento `agent.moved_to_desk` deve ser **derivado** pelo visualizador de `task.
 
 ### Contrato base dos provedores
 
-O arquivo `packages/contracts/src/index.ts` define `AgentProvider`, `AgentExecutionRequest`, `AgentExecutionResult`. A versão real receberá também: `runId`, artefatos/contextos autorizados, `modelId`, `allowedTools`, sinais de streaming e identificadores do sandbox. Nunca compartilhar segredos em prompts ou logs.
+A S16 define o contrato normativo em `packages/contracts/src/provider.ts`, reexportado por `index.ts`: `AgentProvider`, `AgentExecutionRequest`, `AgentExecutionResult` e eventos tipados de streaming. O request contém `projectId`, `taskId`, `runId`, papel, `modelId`, `allowedTools` (metadados, nunca permissão), budget e `sandboxId`. `MockProvider` fornece streaming/cancelamento determinístico, sem rede ou execução de comandos; detalhes em [PROVIDER_MOCK.md](PROVIDER_MOCK.md). S17 implementará o primeiro adapter real, sempre no sandbox autorizado. Não compartilhar segredos em prompts ou logs.
 
 ### Endpoints previstos de produção
 
