@@ -12,6 +12,8 @@ import {TokenStore} from '../packages/db/src/tokens.ts';
 import {GitIntegrationQueue,IntegrationConflict,IntegrationForbidden} from '../packages/db/src/git-integration.ts';
 import {BareGitIntegration,GitValidationError} from '../packages/db/src/git-driver.ts';
 import {EvidenceLedger} from '../packages/db/src/evidence-ledger.ts';
+import {TaskOrchestrator} from '../packages/db/src/orchestration.ts';
+import {buildPersistentApi} from '../apps/api/src/server.ts';
 
 const connection=process.env.DATABASE_URL;
 let pool:Pool,repo:PostgresOfficeRepository,tokens:TokenStore,queue:GitIntegrationQueue;
@@ -45,14 +47,14 @@ async function newFixture():Promise<Fixture>{
  const result=await repo.createProject({ownerId:owner,name:'S11 disposable '+randomUUID(),
   repositoryRoot:bare,template:'startup'});
  const projectId=result.project.id,officeId=result.office.id;
- const credential=async(subjectId:string,kind:'human'|'integration',scopes:('git:propose'|'git:integrate'|'git:review'|'tasks:read')[])=>{
+ const credential=async(subjectId:string,kind:'human'|'integration',scopes:('git:propose'|'git:integrate'|'git:review'|'tasks:read'|'tasks:transition')[])=>{
   const a=await tokens.provision({projectId,subjectId,kind,scopes,expiresInHours:2});
   const principal=await tokens.authenticate('Bearer '+a.secret);
   assert.ok(principal);return {principal,secret:a.secret};
  };
  const submit=await credential(owner,'integration',['git:propose','tasks:read']);
  const integrate=await credential(operator,'integration',['git:integrate','tasks:read']);
- const human=await credential(reviewer,'human',['git:review','tasks:read']);
+ const human=await credential(reviewer,'human',['git:review','tasks:read','tasks:transition']);
  const untrusted=await credential(randomUUID(),'integration',['git:review','tasks:read']);
  return {
   root,working,bare,projectId,officeId,base,
@@ -320,6 +322,142 @@ test('S11 integration queue blocks SQL injection in branch, commit and root',{sk
   const a=f.branch('feature/safe',{'docs/safe.md':'text\n'});
   await assert.rejects(queue.submit({projectId:f.projectId,taskId:await f.task(),
    candidateRef:'refs/heads/feature/safe && whoami',candidateSha:a,baseSha:f.base},f.auth.submit));
+  assert.equal(new BareGitIntegration(f.bare).head(),f.base);
+ }finally{await f.close();}
+});
+
+async function advanceToReview(projectId:string,taskId:string){
+ const flow=new TaskOrchestrator(pool);
+ let version=1;
+ for(const to of ['queued','planning','implementing','testing','reviewing','awaiting_approval'] as const){
+  const r=await flow.transition({projectId,taskId,commandKey:randomUUID(),
+   expectedVersion:version++,to,reason:null,actor:{kind:'system',id:'system'},source:'system'});
+  assert.equal(r.task.status,to);
+ }
+ return version;
+}
+
+test('S15 rejection is terminal and auditable, never automatically merges',{skip:!connection},async()=>{
+ const f=await newFixture();
+ try{
+  const sha=f.branch('feature/reject',{'docs/rejected.md':'do not merge\n'});
+  const request=await propose(f,'feature/reject',sha);
+  const prepared=await queue.prepare(f.projectId,request.id,f.auth.integrate);
+  assert.equal(prepared.state,'ready');
+  await assert.rejects(queue.decide(f.projectId,request.id,prepared.reviewHash!,
+   'rejected','   ',f.auth.human),IntegrationConflict);
+  await assert.rejects(queue.decide(f.projectId,request.id,prepared.reviewHash!,
+   'rejected','no',f.auth.untrusted),IntegrationForbidden);
+  const rejected=await queue.decide(f.projectId,request.id,prepared.reviewHash!,
+   'rejected','Does not meet acceptance criteria',f.auth.human);
+  assert.equal(rejected.decision,'rejected');
+  const seen=await queue.get(f.projectId,request.id,f.auth.human);
+  assert.equal(seen.state,'rejected');assert.equal(seen.decisionBy,reviewer);
+  assert.equal(seen.review?.diff,prepared.diff);
+  assert.equal(seen.decisionReason,'Does not meet acceptance criteria');
+  await assert.rejects(queue.approve(f.projectId,request.id,prepared.reviewHash!,f.auth.human),IntegrationConflict);
+  await assert.rejects(queue.integrate(f.projectId,request.id,f.auth.integrate),IntegrationConflict);
+  await assert.rejects(queue.resubmit(f.projectId,request.id,{
+   candidateRef:'refs/heads/feature/reject',candidateSha:sha,baseSha:f.base,expectedRevision:1
+  },f.auth.submit),IntegrationConflict);
+  const a=new EvidenceLedger(pool);
+  const receipts=await a.list(f.projectId,request.taskId,'review_decision','git-decision:'+request.id);
+  assert.equal(receipts.length,1);
+  assert.equal(JSON.parse(receipts[0]!.content).evidenceId,prepared.evidenceId);
+  assert.equal(new BareGitIntegration(f.bare).head(),f.base);
+ }finally{await f.close();}
+});
+
+test('S15 requested changes demand new candidate, revision and new human approval',{skip:!connection},async()=>{
+ const f=await newFixture();
+ try{
+  const firstSha=f.branch('feature/draft',{'docs/plan.md':'draft\n'});
+  const request=await propose(f,'feature/draft',firstSha);
+  const first=await queue.prepare(f.projectId,request.id,f.auth.integrate);
+  await queue.decide(f.projectId,request.id,first.reviewHash!,
+   'changes_requested','Add rollback instructions',f.auth.human);
+  assert.equal((await queue.get(f.projectId,request.id,f.auth.human)).state,'changes_requested');
+  await assert.rejects(queue.resubmit(f.projectId,request.id,{
+   candidateRef:'refs/heads/feature/draft',candidateSha:firstSha,baseSha:f.base,expectedRevision:1
+  },f.auth.submit),IntegrationConflict);
+  const newer=f.branch('feature/rework',{'docs/plan.md':'draft with rollback\n'});
+  await assert.rejects(queue.resubmit(f.projectId,request.id,{
+   candidateRef:'refs/heads/feature/rework',candidateSha:newer,baseSha:f.base,expectedRevision:2
+  },f.auth.submit),IntegrationConflict);
+  const resubmitted=await queue.resubmit(f.projectId,request.id,{
+   candidateRef:'refs/heads/feature/rework',candidateSha:newer,baseSha:f.base,expectedRevision:1
+  },f.auth.submit);
+  assert.equal(resubmitted.revision,2);
+  const second=await queue.prepare(f.projectId,request.id,f.auth.integrate);
+  assert.notEqual(first.reviewHash,second.reviewHash);
+  assert.notEqual(first.evidenceId,second.evidenceId);
+  await assert.rejects(queue.approve(f.projectId,request.id,first.reviewHash!,f.auth.human),IntegrationConflict);
+  await queue.approve(f.projectId,request.id,second.reviewHash!,f.auth.human);
+  assert.equal((await queue.integrate(f.projectId,request.id,f.auth.integrate)).state,'merged');
+  const ledger=new EvidenceLedger(pool);
+  assert.equal((await ledger.verify(f.projectId,request.taskId,'review_diff','git-review:'+request.id)).count,2);
+  assert.equal((await ledger.verify(f.projectId,request.taskId,'review_decision','git-decision:'+request.id)).count,1);
+  assert.equal((await ledger.verify(f.projectId,request.taskId,'review_approval','git-approval:'+request.id)).count,1);
+  assert.equal(git(f.bare,'show','main:docs/plan.md'),'draft with rollback');
+ }finally{await f.close();}
+});
+
+test('S15 task approval, immutable review and event/outbox commit atomically via HTTP',{skip:!connection},async()=>{
+ const f=await newFixture();
+ const api=await buildPersistentApi(pool);
+ try{
+  const sha=f.branch('feature/task',{'docs/task.md':'approved bytes\n'});
+  const proposal=await propose(f,'feature/task',sha);
+  const prepared=await queue.prepare(f.projectId,proposal.id,f.auth.integrate);
+  const version=await advanceToReview(f.projectId,proposal.taskId);
+  const url='/v1/projects/'+f.projectId+'/tasks/'+proposal.taskId+'/human-decisions';
+  const body={integrationId:proposal.id,commandKey:randomUUID(),expectedVersion:version,
+   reviewHash:prepared.reviewHash,decision:'approved',reason:null};
+  const call=async(secret:string|undefined,input:unknown,path=url)=>api.inject({
+   method:'POST',url:path,headers:{'content-type':'application/json',
+    ...(secret?{authorization:'Bearer '+secret}:{})},
+   payload:JSON.stringify(input)});
+  assert.equal((await call(undefined,body)).statusCode,401);
+  assert.equal((await call(f.auth.integrateSecret,body)).statusCode,403);
+  assert.equal((await call(f.auth.humanSecret,{...body,reviewHash:'0'.repeat(64)})).statusCode,409);
+  assert.equal((await call(f.auth.humanSecret,{...body,expectedVersion:version+99})).statusCode,409);
+  const before=await pool.query('SELECT decision_state FROM git_integration_requests WHERE id=$1',[proposal.id]);
+  assert.equal(before.rows[0].decision_state,'pending');
+  const approved=await call(f.auth.humanSecret,body);
+  assert.equal(approved.statusCode,200,approved.body);
+  assert.equal(approved.json().decision,'approved');
+  assert.equal(approved.json().task.task.status,'approved');
+  assert.equal(approved.json().task.task.version,version+1);
+  const audit=await pool.query('SELECT action FROM git_integration_audit WHERE request_id=$1 AND action=$2',[proposal.id,'approved']);
+  assert.equal(audit.rowCount,1);
+  const outbox=await pool.query('SELECT payload FROM task_outbox WHERE task_id=$1 ORDER BY id DESC LIMIT 1',[proposal.taskId]);
+  assert.equal(outbox.rows[0].payload.type,'task.status_changed');
+  assert.equal(outbox.rows[0].payload.actor.kind,'human');
+  assert.equal((await call(f.auth.humanSecret,body)).statusCode,409);
+  assert.equal((await call(f.auth.humanSecret,{...body,commandKey:randomUUID()})).statusCode,409);
+  assert.equal((await queue.integrate(f.projectId,proposal.id,f.auth.integrate)).state,'merged');
+  const forbidden=await call(f.auth.humanSecret,{...body,decision:'rejected',reason:'never'});
+  assert.equal(forbidden.statusCode,409);
+ }finally{await api.close();await f.close();}
+});
+
+test('S15 requested changes and explicit rejection atomically update task state',{skip:!connection},async()=>{
+ const f=await newFixture();
+ try{
+  const a=f.branch('feature/requestchanges',{'docs/rework.md':'review this\n'});
+  const proposal=await propose(f,'feature/requestchanges',a);
+  const prepared=await queue.prepare(f.projectId,proposal.id,f.auth.integrate);
+  const version=await advanceToReview(f.projectId,proposal.taskId);
+  const result=await queue.decide(f.projectId,proposal.id,prepared.reviewHash!,
+   'changes_requested','Fix integration tests',f.auth.human,
+   {taskId:proposal.taskId,expectedVersion:version,commandKey:randomUUID()});
+  assert.equal(result.task?.task.status,'changes_requested');
+  const flow=new TaskOrchestrator(pool);
+  const queued=await flow.transition({projectId:f.projectId,taskId:proposal.taskId,
+   commandKey:randomUUID(),expectedVersion:version+1,to:'queued',reason:null,
+   actor:{kind:'system',id:'system'},source:'system'});
+  assert.equal(queued.task.status,'queued');
+  assert.notEqual(queued.task.currentRunId,result.task?.task.currentRunId);
   assert.equal(new BareGitIntegration(f.bare).head(),f.base);
  }finally{await f.close();}
 });

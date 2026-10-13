@@ -5,6 +5,7 @@ import {UuidSchema} from '../../contracts/src/domain.ts';
 import type {AuthPrincipal,ApiScope} from './tokens.ts';
 import {BareGitIntegration,GitValidationError,validRef,validSha} from './git-driver.ts';
 import {EvidenceLedger,EvidenceIntegrityError} from './evidence-ledger.ts';
+import {TaskOrchestrator} from './orchestration.ts';
 
 export const GitProposalSchema=z.strictObject({
  projectId:UuidSchema,taskId:UuidSchema,candidateRef:z.string().max(180),
@@ -23,6 +24,8 @@ type Row={
  state:string;priority:number;created_at:Date;reviewed_head:string|null;
  tested_tree:string|null;planned_commit:string|null;review_sha256:string|null;
  review_evidence_id:string|null;
+ decision_state:'pending'|'approved'|'rejected'|'changes_requested';
+ decision_by:string|null;decision_at:Date|null;decision_reason:string|null;revision:number;
  approved_by:string|null;approved_at:Date|null;merged_at:Date|null;
  validation_json:unknown
 };
@@ -88,7 +91,9 @@ export class GitIntegrationQueue{
   UuidSchema.parse(projectId);UuidSchema.parse(id);this.actor(principal,projectId,'git:integrate');
   return this.locked(projectId,principal,'git:integrate',async(c,git)=>{
    const row=await this.read(c,projectId,id);
-   if(row.state==='merged')throw new IntegrationConflict('Already merged');
+   if(row.state==='merged'||row.state==='rejected'||row.state==='changes_requested')
+    throw new IntegrationConflict('Proposal must be resubmitted before review');
+   if(row.decision_state==='approved')throw new IntegrationConflict('Approved proposal cannot be reprepared');
    const ahead=await c.query(
     "SELECT id FROM git_integration_requests WHERE project_id=$1 AND state IN ('queued','stale') AND id<>$2 "+
     'AND (priority>$3 OR (priority=$3 AND (created_at<$4 OR (created_at=$4 AND id<$2)))) LIMIT 1',
@@ -100,6 +105,7 @@ export class GitIntegrationQueue{
    if(!prepared){
     await c.query("UPDATE git_integration_requests SET state=$3,reviewed_head=NULL,tested_tree=NULL,"+
       'planned_commit=NULL,review_sha256=NULL,review_evidence_id=NULL,approved_by=NULL,approved_at=NULL,'+
+      "decision_state='pending',decision_by=NULL,decision_at=NULL,decision_reason=NULL,"+
       'validation_json=$4::jsonb,updated_at=now() WHERE project_id=$1 AND id=$2',
      [projectId,id,nextState,JSON.stringify({ok:false,reason:'candidate conflict or combined checks did not pass'})]);
     await this.audit(c,projectId,id,'blocked',principal.subjectId,{state:nextState});
@@ -114,6 +120,7 @@ export class GitIntegrationQueue{
    if(snapshot.contentSha256!==prepared.diffSha256)throw new EvidenceIntegrityError('Stored diff mismatch');
    await c.query("UPDATE git_integration_requests SET state='ready',reviewed_head=$3,tested_tree=$4,"+
      'planned_commit=$5,review_sha256=$6,review_evidence_id=$7,approved_by=NULL,approved_at=NULL,'+
+     "decision_state='pending',decision_by=NULL,decision_at=NULL,decision_reason=NULL,"+
      'validation_json=$8::jsonb,updated_at=now() WHERE project_id=$1 AND id=$2',
     [projectId,id,prepared.targetHead,prepared.tree,prepared.commit,prepared.reviewHash,
      snapshot.id,JSON.stringify({ok:true,checks:prepared.checks,diffSha256:prepared.diffSha256})]);
@@ -142,30 +149,104 @@ export class GitIntegrationQueue{
   return e;
  }
  async approve(projectId:string,id:string,reviewHash:string,principal:AuthPrincipal){
+  return this.decide(projectId,id,reviewHash,'approved',null,principal);
+ }
+ async decide(projectId:string,id:string,reviewHash:string,
+  decision:'approved'|'rejected'|'changes_requested',reason:string|null,principal:AuthPrincipal,
+  taskReview?:{taskId:string;expectedVersion:number;commandKey:string}){
   UuidSchema.parse(projectId);UuidSchema.parse(id);
   if(!/^[a-f0-9]{64}$/.test(reviewHash))throw new IntegrationConflict('Invalid review hash');
+  if(!['approved','rejected','changes_requested'].includes(decision))
+   throw new IntegrationConflict('Invalid human decision');
+  if(decision==='approved'&&reason!==null)throw new IntegrationConflict('Approval cannot add a reason');
+  if(decision!=='approved'&&(typeof reason!=='string'||!reason.trim()||reason.trim().length>2000))
+   throw new IntegrationConflict('Rejection or changes request requires actionable feedback');
   this.actor(principal,projectId,'git:review');
+  if(taskReview){
+   this.actor(principal,projectId,'tasks:transition');
+   UuidSchema.parse(taskReview.taskId);UuidSchema.parse(taskReview.commandKey);
+   if(!Number.isSafeInteger(taskReview.expectedVersion)||taskReview.expectedVersion<1)
+    throw new IntegrationConflict('Invalid task version');
+  }
   if(principal.kind!=='human')throw new IntegrationForbidden('Human identity required');
   return this.locked(projectId,principal,'git:review',async(c,git)=>{
    const row=await this.read(c,projectId,id);
-   if(row.approved_by)throw new IntegrationConflict('Proposal already reviewed; reprepare for a new review');
-   if(row.state!=='ready'||row.review_sha256!==reviewHash||row.submitter_id===principal.subjectId)
-    throw new IntegrationConflict('Proposal not reviewable by this human with this hash');
+   if(taskReview&&row.task_id!==taskReview.taskId)
+    throw new IntegrationNotFound('Review does not belong to task');
+   if(taskReview){
+    const auth=await c.query('SELECT 1 FROM api_tokens WHERE id=$1 AND project_id=$2 '+
+     "AND subject_id=$3 AND subject_kind='human' AND 'tasks:transition'=ANY(scopes) "+
+     'AND revoked_at IS NULL AND expires_at>now() FOR SHARE',
+     [principal.tokenId,projectId,principal.subjectId]);
+    if(!auth.rowCount)throw new IntegrationForbidden('Task decision scope no longer valid');
+   }
+   if(row.state!=='ready'||row.decision_state!=='pending'||row.approved_by||
+      row.review_sha256!==reviewHash||row.submitter_id===principal.subjectId)
+    throw new IntegrationConflict('Proposal already decided or review hash outdated');
    const snapshot=await this.verifiedReview(c,git,row);
-   if(git.head()!==row.reviewed_head)throw new IntegrationConflict('Base moved, reprepare before approval');
+   if(git.head()!==row.reviewed_head)throw new IntegrationConflict('Base moved, reprepare before decision');
    try{git.verifyCandidate(row.candidate_ref,row.base_sha,row.candidate_sha);}
-   catch{throw new IntegrationConflict('Candidate changed, reprepare before approval');}
+   catch{throw new IntegrationConflict('Candidate changed, reprepare before decision');}
+   const actionReason=decision==='approved'?null:reason!.trim();
    await c.query(
-    'UPDATE git_integration_requests SET approved_by=$3,approved_at=now(),updated_at=now() WHERE project_id=$1 AND id=$2',
-    [projectId,id,principal.subjectId]);
-   await this.evidence.appendTx(c,{projectId,taskId:row.task_id,runId:null,
-    kind:'review_approval',scopeKey:'git-approval:'+id,actorId:principal.subjectId,
-    content:JSON.stringify({reviewHash,evidenceId:snapshot.id,diffSha256:snapshot.contentSha256,
-     plannedCommit:row.planned_commit}),metadata:{reviewEvidenceId:snapshot.id}
-   });
-   await this.audit(c,projectId,id,'approved',principal.subjectId,
-    {reviewHash,evidenceId:snapshot.id,diffSha256:snapshot.contentSha256});
-   return {id,approved:true,reviewHash,approvedBy:principal.subjectId};
+    'UPDATE git_integration_requests SET decision_state=$3::text,decision_by=$4,decision_at=now(),'+
+    "decision_reason=$5,approved_by=CASE WHEN $3::text='approved' THEN $4::uuid ELSE NULL END,"+
+    "approved_at=CASE WHEN $3::text='approved' THEN now() ELSE NULL END,"+
+    "state=CASE WHEN $3::text='approved' THEN 'ready' ELSE $3::text END,"+
+    'updated_at=now() WHERE project_id=$1 AND id=$2',
+    [projectId,id,decision,principal.subjectId,actionReason]);
+   const recorded=await this.evidence.appendTx(c,{projectId,taskId:row.task_id,runId:null,
+    kind:decision==='approved'?'review_approval':'review_decision',
+    scopeKey:decision==='approved'?'git-approval:'+id:'git-decision:'+id,
+    actorId:principal.subjectId,
+    content:JSON.stringify({decision,reviewHash,evidenceId:snapshot.id,revision:row.revision,
+     diffSha256:snapshot.contentSha256,plannedCommit:row.planned_commit,reason:actionReason}),
+    metadata:{reviewEvidenceId:snapshot.id,revision:row.revision,decision}});
+   await this.audit(c,projectId,id,decision,principal.subjectId,
+    {reviewHash,evidenceId:snapshot.id,diffSha256:snapshot.contentSha256,
+     decisionEvidenceId:recorded.id,revision:row.revision,reason:actionReason});
+   const task=taskReview?await new TaskOrchestrator(this.pool).transitionTx(c,{
+    projectId,taskId:taskReview.taskId,commandKey:taskReview.commandKey,
+    expectedVersion:taskReview.expectedVersion,
+    to:decision==='approved'?'approved':decision==='rejected'?'cancelled':'changes_requested',
+    reason:actionReason,actor:{kind:'human',id:principal.subjectId},source:'api'
+   }):null;
+   return {id,approved:decision==='approved',decision,reviewHash,
+    approvedBy:decision==='approved'?principal.subjectId:null,
+    decidedBy:principal.subjectId,revision:row.revision,evidenceId:snapshot.id,
+    task};
+  });
+ }
+ async resubmit(projectId:string,id:string,input:{
+  candidateRef:string;candidateSha:string;baseSha:string;expectedRevision:number
+ },principal:AuthPrincipal){
+  UuidSchema.parse(projectId);UuidSchema.parse(id);
+  const parsed=z.strictObject({candidateRef:z.string().max(180),
+   candidateSha:z.string().length(40),baseSha:z.string().length(40),
+   expectedRevision:z.number().int().positive()}).parse(input);
+  if(!validRef(parsed.candidateRef)||!validSha(parsed.candidateSha)||!validSha(parsed.baseSha))
+   throw new IntegrationConflict('Invalid candidate');
+  this.actor(principal,projectId,'git:propose');
+  return this.locked(projectId,principal,'git:propose',async(c,git)=>{
+   const row=await this.read(c,projectId,id);
+   if(row.state!=='changes_requested'||row.decision_state!=='changes_requested'||
+      row.revision!==parsed.expectedRevision||row.submitter_id!==principal.subjectId)
+    throw new IntegrationConflict('Only submitter may resubmit requested changes with current revision');
+   if(row.candidate_sha===parsed.candidateSha)
+    throw new IntegrationConflict('Changes requested require a new commit');
+   git.verifyCandidate(parsed.candidateRef,parsed.baseSha,parsed.candidateSha);
+   await c.query(
+    "UPDATE git_integration_requests SET state='queued',decision_state='pending',"+
+    'decision_by=NULL,decision_at=NULL,decision_reason=NULL,approved_by=NULL,'+
+    'approved_at=NULL,reviewed_head=NULL,tested_tree=NULL,planned_commit=NULL,'+
+    "review_sha256=NULL,review_evidence_id=NULL,validation_json='{}'::jsonb,"+
+    'candidate_ref=$3,candidate_sha=$4,base_sha=$5,revision=revision+1,updated_at=now() '+
+    'WHERE project_id=$1 AND id=$2',
+    [projectId,id,parsed.candidateRef,parsed.candidateSha,parsed.baseSha]);
+   await this.audit(c,projectId,id,'resubmitted',principal.subjectId,
+    {priorRevision:row.revision,priorEvidenceId:row.review_evidence_id,
+     candidateSha:parsed.candidateSha});
+   return {id,state:'queued',revision:row.revision+1};
   });
  }
  async integrate(projectId:string,id:string,principal:AuthPrincipal){
@@ -176,7 +257,7 @@ export class GitIntegrationQueue{
     await this.verifiedReview(c,git,row);
     return {id,state:'merged',commit:row.planned_commit,replayed:true};
    }
-   if(row.state!=='ready'||!row.approved_by||!row.approved_at||!row.planned_commit||
+   if(row.state!=='ready'||row.decision_state!=='approved'||!row.approved_by||!row.approved_at||!row.planned_commit||
       !row.reviewed_head||!row.review_sha256||!row.tested_tree)
     throw new IntegrationConflict('Verified human approval required before merge');
    await this.verifiedReview(c,git,row);
@@ -197,6 +278,7 @@ export class GitIntegrationQueue{
    }
    if(stale){
     await c.query("UPDATE git_integration_requests SET state='stale',approved_by=NULL,approved_at=NULL,"+
+      "decision_state='pending',decision_by=NULL,decision_at=NULL,decision_reason=NULL,"+
       'updated_at=now() WHERE project_id=$1 AND id=$2',[projectId,id]);
     await this.audit(c,projectId,id,'stale',principal.subjectId,{reason:'branch or target changed'});
     return {id,state:'stale',replayed:false};
@@ -204,6 +286,7 @@ export class GitIntegrationQueue{
    try{git.apply(row.reviewed_head,row.planned_commit);}
    catch{
     await c.query("UPDATE git_integration_requests SET state='stale',approved_by=NULL,approved_at=NULL,"+
+      "decision_state='pending',decision_by=NULL,decision_at=NULL,decision_reason=NULL,"+
       'updated_at=now() WHERE project_id=$1 AND id=$2',[projectId,id]);
     await this.audit(c,projectId,id,'stale',principal.subjectId,{reason:'atomic Git ref CAS failed'});
     return {id,state:'stale',replayed:false};
@@ -221,7 +304,7 @@ export class GitIntegrationQueue{
   if(!r.rowCount)throw new IntegrationNotFound('Integration request not found');
   const x=r.rows[0]!;
   let review:null|{evidenceId:string;diff:string;diffSha256:string;version:number}=null;
-  if(x.state==='ready'||x.state==='merged'){
+  if(['ready','merged','rejected','changes_requested'].includes(x.state)){
    const source=await this.pool.query<{repository_root:string|null}>(
     'SELECT repository_root FROM projects WHERE id=$1',[projectId]);
    if(!source.rows[0]?.repository_root)throw new IntegrationConflict('Cannot verify review Git source');
@@ -236,13 +319,15 @@ export class GitIntegrationQueue{
   return {id:x.id,projectId,taskId:x.task_id,state:x.state,priority:x.priority,
    candidateRef:x.candidate_ref,candidateSha:x.candidate_sha,baseSha:x.base_sha,
    targetHead:x.reviewed_head,testedTree:x.tested_tree,reviewHash:x.review_sha256,
-   review,approvedBy:x.approved_by,mergedCommit:x.state==='merged'?x.planned_commit:null,checks:x.validation_json};
+   review,approvedBy:x.approved_by,decision:x.decision_state,decisionBy:x.decision_by,
+   decisionReason:x.decision_reason,revision:x.revision,
+   mergedCommit:x.state==='merged'?x.planned_commit:null,checks:x.validation_json};
  }
  async list(projectId:string,principal:AuthPrincipal){
   UuidSchema.parse(projectId);this.actor(principal,projectId,'tasks:read');
   const r=await this.pool.query(
-   'SELECT id,task_id,state,priority,review_sha256,approved_by FROM git_integration_requests WHERE project_id=$1 ORDER BY priority DESC,created_at,id LIMIT 100',[projectId]);
+   'SELECT id,task_id,state,priority,review_sha256,approved_by,decision_state,revision FROM git_integration_requests WHERE project_id=$1 ORDER BY priority DESC,created_at,id LIMIT 100',[projectId]);
   return r.rows.map(x=>({id:x.id,taskId:x.task_id,state:x.state,priority:x.priority,
-   reviewHash:x.review_sha256,approvedBy:x.approved_by}));
+   reviewHash:x.review_sha256,approvedBy:x.approved_by,decision:x.decision_state,revision:x.revision}));
  }
 }

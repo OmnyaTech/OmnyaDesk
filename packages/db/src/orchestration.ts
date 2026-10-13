@@ -1,5 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
-import type {Pool} from 'pg';
+import type {Pool,PoolClient} from 'pg';
 import {z} from 'zod';
 import {
   canTransitionTask,TaskSchema,TaskLifecycleStateSchema,UuidSchema,
@@ -37,11 +37,21 @@ export class TaskOrchestrator {
  private readonly pool:Pool;
  constructor(pool:Pool){this.pool=pool;}
  async transition(raw:TransitionCommand):Promise<TransitionResult> {
+  const client=await this.pool.connect();
+  try{
+   await client.query('BEGIN');
+   const result=await this.transitionTx(client,raw);
+   await client.query('COMMIT');
+   return result;
+  }catch(error){
+   await client.query('ROLLBACK');
+   throw error;
+  }finally{client.release();}
+ }
+ // For S15 use inside the SAME Git human-review transaction, no independent commit.
+ async transitionTx(client:PoolClient,raw:TransitionCommand):Promise<TransitionResult> {
   const c=TransitionCommand.parse(raw);
   const requestSha=createHash('sha256').update(norm(c)).digest('hex');
-  const client=await this.pool.connect();
-  try {
-   await client.query('BEGIN');
    // Per-task row lock serializes competing writers, including duplicate commands.
    const rows=await client.query('SELECT * FROM tasks WHERE id=$1 AND project_id=$2 FOR UPDATE',[c.taskId,c.projectId]);
    if(!rows.rowCount)throw new WorkflowNotFound('Task not found for project');
@@ -51,7 +61,6 @@ export class TaskOrchestrator {
    if(previous.rowCount){
     if(previous.rows[0]!.request_sha256!==requestSha)throw new WorkflowConflict('Idempotency key reused with different command');
     const response=validateSnapshot(previous.rows[0]!.response_json);
-    await client.query('COMMIT');
     return {...response,replayed:true};
    }
    const current=taskFrom(rows.rows[0]);
@@ -121,12 +130,7 @@ export class TaskOrchestrator {
    await client.query(
     'INSERT INTO task_commands(project_id,task_id,command_key,request_sha256,response_json) VALUES($1,$2,$3,$4,$5::jsonb)',
     [c.projectId,c.taskId,c.commandKey,requestSha,JSON.stringify(result)]);
-   await client.query('COMMIT');
    return {...result,replayed:false};
-  }catch(error){
-   await client.query('ROLLBACK');
-   throw error;
-  }finally{client.release();}
  }
  async listOutbox(projectId:string,afterId=0):Promise<{id:number;event:VersionedDomainEventV1}[]>{
   if(!Number.isSafeInteger(afterId)||afterId<0)throw new WorkflowBadRequest('Invalid outbox cursor');

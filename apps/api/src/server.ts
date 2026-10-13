@@ -12,6 +12,7 @@ import {ResourceScheduler,SchedulerConflict,SchedulerBadRequest,SchedulerNotFoun
 import {TaskIntakeService,IntakeConflict,IntakeUnauthorized,IntakeForbidden,IntakeNotFound} from '../../../packages/db/src/intake.ts';
 import {GitIntegrationQueue,IntegrationConflict,IntegrationForbidden,IntegrationNotFound} from '../../../packages/db/src/git-integration.ts';
 import {GitValidationError} from '../../../packages/db/src/git-driver.ts';
+import {EvidenceIntegrityError} from '../../../packages/db/src/evidence-ledger.ts';
 
 const uuid={type:'string',format:'uuid'} as const;
 const projectParams={type:'object',required:['projectId'],additionalProperties:false,
@@ -61,6 +62,7 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
   if(error instanceof IntegrationConflict||error instanceof IntegrationForbidden||error instanceof IntegrationNotFound)
    return res.code(error.status).send({error:error.status===404?'Not found':error.status===403?'Insufficient scope':error.message});
   if(error instanceof GitValidationError)return res.code(409).send({error:'Git candidate or integration repository validation failed'});
+  if(error instanceof EvidenceIntegrityError)return res.code(409).send({error:'Immutable review integrity mismatch'});
   if(error instanceof SchedulerConflict||error instanceof SchedulerBadRequest||error instanceof SchedulerNotFound)
    return res.code(error.status).send({error:error.status===404?'Not found':error.message});
   if(error instanceof IntakeConflict||error instanceof IntakeUnauthorized||error instanceof IntakeForbidden||error instanceof IntakeNotFound)
@@ -219,6 +221,49 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
   async(req)=>{
    const actor=guard(req,'git:review',req.params.projectId);
    return integrations.approve(req.params.projectId,req.params.id,req.body.reviewHash,actor);
+  });
+ const reviewDecisionBody={type:'object',required:['reviewHash','decision','reason'],
+  additionalProperties:false,properties:{
+   reviewHash:hash,decision:{type:'string',enum:['approved','rejected','changes_requested']},
+   reason:{anyOf:[{type:'string',minLength:1,maxLength:2000},{type:'null'}]}
+  }} as const;
+ api.post<{Params:{projectId:string;id:string};Body:{
+  reviewHash:string;decision:'approved'|'rejected'|'changes_requested';reason:string|null
+ }}>('/v1/projects/:projectId/git/integrations/:id/decide',{
+  schema:{...secured('git:review'),params:integrationParams,tags:['git-integrations'],
+   body:reviewDecisionBody}},async(req)=>{
+   const actor=guard(req,'git:review',req.params.projectId);
+   return integrations.decide(req.params.projectId,req.params.id,
+    req.body.reviewHash,req.body.decision,req.body.reason,actor);
+  });
+ api.post<{Params:{projectId:string;id:string};Body:{
+  candidateRef:string;candidateSha:string;baseSha:string;expectedRevision:number
+ }}>('/v1/projects/:projectId/git/integrations/:id/resubmit',{
+  schema:{...secured('git:propose'),params:integrationParams,tags:['git-integrations'],
+   body:{type:'object',required:['candidateRef','candidateSha','baseSha','expectedRevision'],
+    additionalProperties:false,properties:{candidateRef:{type:'string',minLength:1,maxLength:180},
+     candidateSha:sha,baseSha:sha,expectedRevision:{type:'integer',minimum:1}}}}},async(req)=>{
+   const actor=guard(req,'git:propose',req.params.projectId);
+   return integrations.resubmit(req.params.projectId,req.params.id,req.body,actor);
+  });
+ api.post<{Params:{projectId:string;taskId:string};Body:{
+  integrationId:string;commandKey:string;expectedVersion:number;
+  reviewHash:string;decision:'approved'|'rejected'|'changes_requested';reason:string|null
+ }}>('/v1/projects/:projectId/tasks/:taskId/human-decisions',{
+  schema:{...secured('git:review'),params:taskParams,tags:['human-approval'],
+   description:'Atomic human decision: immutable Git review, audit evidence and task event/outbox commit together.',
+   body:{type:'object',required:['integrationId','commandKey','expectedVersion','reviewHash','decision','reason'],
+    additionalProperties:false,properties:{
+     integrationId:uuid,commandKey:uuid,expectedVersion:{type:'integer',minimum:1},
+     reviewHash:hash,decision:{type:'string',enum:['approved','rejected','changes_requested']},
+     reason:{anyOf:[{type:'string',minLength:1,maxLength:2000},{type:'null'}]}
+    }}}},async(req)=>{
+   const actor=guard(req,'git:review',req.params.projectId);
+   guard(req,'tasks:transition',req.params.projectId);
+   return integrations.decide(req.params.projectId,req.body.integrationId,
+    req.body.reviewHash,req.body.decision,req.body.reason,actor,
+    {taskId:req.params.taskId,expectedVersion:req.body.expectedVersion,
+     commandKey:req.body.commandKey});
   });
  api.post<{Params:{projectId:string;id:string}}>('/v1/projects/:projectId/git/integrations/:id/integrate',{
   schema:{...secured('git:integrate'),params:integrationParams,tags:['git-integrations']}},

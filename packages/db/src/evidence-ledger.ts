@@ -8,7 +8,7 @@ export class EvidenceNotFound extends Error{readonly status=404;}
 const SHA=/^[a-f0-9]{64}$/;
 export const EvidenceInputSchema=z.strictObject({
  projectId:UuidSchema,taskId:UuidSchema,runId:UuidSchema.nullable().default(null),
- kind:z.enum(['log','diff','artifact','review_diff','review_approval']),
+ kind:z.enum(['log','diff','artifact','review_diff','review_approval','review_decision']),
  scopeKey:z.string().min(1).max(180).regex(/^[A-Za-z0-9_./:-]+$/).refine(value=>!value.includes('..')&&!value.startsWith('/')&&!value.includes('//')),
  actorId:z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/),
  content:z.string().max(65536),
