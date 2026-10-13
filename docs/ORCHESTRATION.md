@@ -31,7 +31,7 @@ Exemplo do payload de transição:
 
 ```json
 {
-  "commandKey": "00000000-0000-4000-8000-000000000000",
+  $111111111-1111-4111-8111-111111111111",
   "expectedVersion": 1,
   "to": "queued",
   "reason": null
