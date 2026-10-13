@@ -1,0 +1,58 @@
+name: Public source quality & secret guard
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: omnya_ci
+          # Disposable container accessible only inside this CI runner.
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: omnyadesk_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U omnya_ci -d omnyadesk_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # Disposable CI-only user/database. Never put live credentials in YAML.
+      DATABASE_URL: postgresql://omnya_ci@127.0.0.1:5432/omnyadesk_ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Scan history with Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+      - name: Scan committed public content
+        run: node scripts/audit-public.mjs
+      - name: Install pinned dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply versioned SQL migrations
+        run: pnpm run db:migrate
+      - name: Lint, typecheck, tests, build and smoke
+        run: pnpm run check
+      # Remote Docker/SSH suites are opt-in and require a dedicated runner.
+      # No production SSH private key or live API token is supplied to CI.

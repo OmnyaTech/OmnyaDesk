@@ -1,0 +1,58 @@
+{
+  "name": "omnyadesk",
+  "version": "0.1.0-prealpha",
+  "private": true,
+  "type": "module",
+  "description": "OmnyaDesk Hybrid — bootstrap da plataforma multiagente",
+  "packageManager": "pnpm@10.18.0",
+  "engines": {
+    "node": ">=22.16.0",
+    "pnpm": ">=10.18.0"
+  },
+  "scripts": {
+    "dev": "node --experimental-strip-types apps/api/src/main.ts",
+    "start": "node dist/apps/api/src/main.js",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "cli": "node apps/cli/src/main.mjs",
+    "db:migrate": "node --experimental-strip-types packages/db/src/migrate-cli.ts",
+    "token:issue": "node --experimental-strip-types apps/cli/src/issue-token.ts",
+    "token:revoke": "node --experimental-strip-types apps/cli/src/revoke-token.ts",
+    "project:create": "node --experimental-strip-types apps/cli/src/create-project.ts",
+    "worktree": "node --experimental-strip-types apps/cli/src/worktree-cli.ts",
+    "tool": "node --experimental-strip-types apps/cli/src/tool-cli.ts",
+    "worker": "node dist/apps/worker/src/main.js",
+    "worker:once": "node dist/apps/worker/src/main.js --once",
+    "mcp:stdio": "node dist/apps/mcp/src/main.js",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-web.mjs",
+    "smoke:build": "node scripts/smoke-built.mjs",
+    "smoke:worker": "node scripts/smoke-worker.mjs",
+    "smoke:auth": "node scripts/smoke-auth.mjs",
+    "smoke:sse": "node scripts/smoke-sse.mjs",
+    "smoke:mcp": "node scripts/smoke-mcp.mjs",
+    "smoke:scheduler": "node scripts/smoke-scheduler.mjs",
+    "smoke:git": "node scripts/smoke-git-integration.mjs",
+    "smoke:sandbox": "node scripts/smoke-sandbox.mjs",
+    "smoke:tools": "node scripts/smoke-tool-gateway.mjs",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run smoke:build && pnpm run smoke:worker && pnpm run smoke:auth && pnpm run smoke:sse && pnpm run smoke:mcp && pnpm run smoke:scheduler && pnpm run smoke:git && pnpm run smoke:sandbox && pnpm run smoke:tools"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@types/node": "24.8.1",
+    "@types/pg": "8.23.1",
+    "@types/ssh2": "1.15.5",
+    "eslint": "9.39.1",
+    "globals": "16.4.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.2"
+  },
+  "dependencies": {
+    "@fastify/swagger": "9.9.2",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "fastify": "5.12.5",
+    "pg": "8.23.1",
+    "ssh2": "1.17.0",
+    "zod": "4.6.6"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@omnyadesk/db",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@omnyadesk/contracts": "workspace:*",
+    "pg": "8.23.1"
+  }
+}

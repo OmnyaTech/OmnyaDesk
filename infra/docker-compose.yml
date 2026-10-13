@@ -1,0 +1,20 @@
+# Local development only. Password is generated in ignored .env.
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: "no"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-omnyadesk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate .env using node scripts/init-local.mjs}
+      POSTGRES_DB: ${POSTGRES_DB:-omnyadesk}
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5433}:5432'
+    volumes:
+      - omnyadesk_local_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  omnyadesk_local_pg:
