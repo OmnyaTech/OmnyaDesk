@@ -85,12 +85,14 @@ test('S06 concurrent workers use SKIP LOCKED and never share a lease',{skip:!dat
 });
 
 test('S06 heartbeat refreshes a valid lease and rejects incorrect owner or token',{skip:!databaseUrl},async()=>{
- const s=await create(),job=(await claim(s,'heartbeat',180))!;
- assert.equal(await queue.heartbeat(job.id,'intruder',job.leaseToken!,180),false);
- assert.equal(await queue.heartbeat(job.id,'heartbeat',randomUUID(),180),false);
- await delay(80);
- assert.equal(await queue.heartbeat(job.id,'heartbeat',job.leaseToken!,180),true);
- await delay(125);
+ // Allow for slower CI PostgreSQL I/O while still crossing the original lease boundary.
+ const leaseMs=1600;
+ const s=await create(),job=(await claim(s,'heartbeat',leaseMs))!;
+ assert.equal(await queue.heartbeat(job.id,'intruder',job.leaseToken!,leaseMs),false);
+ assert.equal(await queue.heartbeat(job.id,'heartbeat',randomUUID(),leaseMs),false);
+ await delay(700);
+ assert.equal(await queue.heartbeat(job.id,'heartbeat',job.leaseToken!,leaseMs),true);
+ await delay(1000);
  assert.equal(await queue.reapExpired(5,s.projectId),0);
  assert.equal((await queue.get(job.id))?.status,'running');
  assert.equal(await queue.complete(job.id,'heartbeat',job.leaseToken!,{safe:true}),true);
