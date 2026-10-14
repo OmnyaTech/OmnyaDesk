@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import {randomBytes} from 'node:crypto';
-import {isUuid,parseRequest,type HostMessage,type Project,type Task,type OfficeEvent,type Snapshot} from './protocol.js';
+import {isUuid,parseRequest,type HostMessage,type Project,type Task,type OfficeEvent,type Snapshot,type ReviewView} from './protocol.js';
 
 const SECRET_KEY='omnyadesk.readOnlyToken.v1';
 const ALLOWED_STATES=new Set(['created','queued','planning','implementing','testing','reviewing',
  'awaiting_approval','approved','changes_requested','retrying','blocked','failed','cancelled','expired']);
 const MAX_RESPONSE_BYTES=2_000_000;
+const MAX_REVIEW_DIFF_CHARS=24000;
 function text(value:unknown,max=150):string{
  return typeof value==='string'?value.slice(0,max):'';
 }
@@ -38,7 +39,7 @@ export class LocalReadGateway{
  private readonly port:()=>number,private readonly transport:typeof fetch=globalThis.fetch){}
  private async get(path:string):Promise<unknown>{
   // Only fixed localhost paths constructed in this host; never a webview URL.
-  if(!/^\/v1\/(?:projects(?:\/[a-f0-9-]+(?:\/(?:tasks|events\?after=\d+))?)?)$/i.test(path))
+  if(!/^\/v1\/projects(?:\/[a-f0-9-]+(?:\/(?:tasks|events\?after=\d+|git\/integrations(?:\/[a-f0-9-]+)?))?)?$/i.test(path))
    throw Error('Rota de leitura inválida');
   const p=this.port();
   if(!Number.isInteger(p)||p<1024||p>65535)throw Error('Porta local inválida');
@@ -55,6 +56,23 @@ export class LocalReadGateway{
   const body=await response.text();
   if(body.length>MAX_RESPONSE_BYTES)throw Error('Resposta da API acima do limite de segurança.');
   return JSON.parse(body) as unknown;
+ }
+ async taskReview(projectId:string,taskId:string,authorized:Project[]):Promise<ReviewView|null>{
+  if(!isUuid(projectId)||!isUuid(taskId)||!authorized.some(p=>p.id===projectId))
+   throw Error('Projeto/tarefa fora do escopo autorizado.');
+  const list=await this.get('/v1/projects/'+projectId+'/git/integrations') as {integrations?:unknown[]};
+  const candidates=Array.isArray(list?.integrations)?list.integrations:[];
+  const item=candidates.find(x=>!!x&&typeof x==='object'&&
+   (x as {taskId?:unknown}).taskId===taskId&&isUuid((x as {id?:unknown}).id));
+  if(!item)return null;
+  const record=await this.get('/v1/projects/'+projectId+'/git/integrations/'+(item as {id:string}).id) as {integration?:unknown};
+  const data=record?.integration as {id?:unknown;projectId?:unknown;taskId?:unknown;state?:unknown;reviewHash?:unknown;review?:{diff?:unknown}}|null;
+  if(!data||data.projectId!==projectId||data.taskId!==taskId||!isUuid(data.id)||
+   typeof data.reviewHash!=='string'||!/^[a-f0-9]{64}$/.test(data.reviewHash))return null;
+  const value=typeof data.review?.diff==='string'?data.review.diff:'';
+  const diff=value.slice(0,MAX_REVIEW_DIFF_CHARS);
+  return {integrationId:data.id,taskId,state:text(data.state,40),reviewHash:data.reviewHash,
+   diff,truncated:value.length>MAX_REVIEW_DIFF_CHARS};
  }
  async projects():Promise<Project[]>{
   const data=await this.get('/v1/projects') as {projects?:unknown[]};
@@ -156,6 +174,13 @@ export function activate(context:vscode.ExtensionContext):void{
    if(msg.type==='inspectTask'){
     const task=activeTasks.find(t=>t.id===msg.taskId);
     post({type:'task',value:task??null});
+    post({type:'review',value:null});
+    if(!task||!selected)return;
+    const inspectedProject=selected,inspectedTask=task.id;
+    void gateway.taskReview(inspectedProject,inspectedTask,activeProjects).then(review=>{
+     if(selected===inspectedProject&&activeTasks.some(t=>t.id===inspectedTask))
+      post({type:'review',value:review});
+    }).catch(()=>{post({type:'review',value:null});});
    }
   },undefined,context.subscriptions);
   panel.onDidDispose(()=>{

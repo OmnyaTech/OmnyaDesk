@@ -11,7 +11,9 @@ export type Project={id:string;name:string};
 export type Task={id:string;projectId:string;title:string;status:string;version:number;updatedAt:string;createdAt:string};
 export type OfficeEvent={schemaVersion:number;sequence:number;projectId:string;taskId:string;eventId:string;type:string;occurredAt:string;actor:{kind:string};payload?:{from?:string;to?:string}};
 export type Snapshot={project:Project;projects:Project[];tasks:Task[];events:OfficeEvent[];historyComplete:boolean;updatedAt:string};
+export type ReviewView={integrationId:string;taskId:string;state:string;reviewHash:string;diff:string;truncated:boolean};
 export type HostMessage=
+ | {type:'review';value:ReviewView|null}
  | {type:'snapshot';value:Snapshot}
  | {type:'error';message:string}
  | {type:'waiting';message:string}

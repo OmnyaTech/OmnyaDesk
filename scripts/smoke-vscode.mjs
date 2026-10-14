@@ -36,6 +36,8 @@ const fakeFetch=async(url,opts)=>{
  calls.push(url);
  let data;
  if(url.endsWith('/v1/projects'))data={projects:[{id:p,name:'Projeto Seguro'}]};
+ else if(url.endsWith('/git/integrations'))data={integrations:[{id:other,taskId:t,state:'ready'}]};
+ else if(url.endsWith('/git/integrations/'+other))data={integration:{id:other,projectId:p,taskId:t,state:'ready',reviewHash:'c'.repeat(64),review:{diff:'+<img src=x onerror=alert(1)>\\n+S29_SAFE_DIFF'}}};
  else if(url.endsWith('/tasks'))data={tasks:[
   {id:t,projectId:p,title:'Executar validação',status:'implementing',version:1,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()},
   {id:other,projectId:other,title:'INTRUSO',status:'implementing',version:1}]};
@@ -51,7 +53,11 @@ assert.equal(snapshot.tasks.length,1);assert.equal(snapshot.events.length,1);
 assert.equal(JSON.stringify(snapshot).includes(token),false);
 await assert.rejects(()=>gateway.snapshot(other,projects),/fora do escopo/);
 await assert.rejects(()=>new ext.LocalReadGateway(async()=>token,()=>80,fakeFetch).projects(),/Porta local/);
-assert.equal(calls.length,3,'Only project-scoped GETs from host allowed');
+const verified=await gateway.taskReview(p,t,projects);
+assert.equal(verified?.reviewHash,'c'.repeat(64));
+assert.ok(verified?.diff.includes('S29_SAFE_DIFF'));
+await assert.rejects(()=>gateway.taskReview(other,t,projects),/fora do escopo/);
+assert.equal(calls.length,5,'Only project-scoped GETs including validated diff from host allowed');
 const html=ext.webviewHtml(webview,context.extensionUri);
 assert.match(html,/connect-src 'none'/);
 assert.match(html,/script-src 'nonce-[^']+'/);
@@ -94,6 +100,18 @@ try{
  await page.locator('[data-office-map="phaser"] canvas').waitFor();
  await page.getByRole('button',{name:'Atualizar'}).click();
  assert.ok(await page.evaluate(()=>window.__posted.some(m=>m.type==='refresh')));
+ await page.evaluate(({task,review})=>{
+  window.__injected=false;
+  window.alert=()=>{window.__injected=true;};
+  window.dispatchEvent(new MessageEvent('message',{data:{type:'task',value:task}}));
+  window.dispatchEvent(new MessageEvent('message',{data:{type:'review',value:review}}));
+ },{task:snapshot.tasks[0],review:verified});
+ await page.getByRole('region',{name:'Detalhes da tarefa'}).waitFor();
+ await page.getByRole('region',{name:'Diff de revisão Git'}).waitFor();
+ assert.ok(await page.getByRole('region',{name:'Diff de revisão Git'}).getByText('S29_SAFE_DIFF',{exact:false}).count());
+ assert.equal(await page.evaluate(()=>window.__injected),false);
+ assert.equal(await page.locator('.office-review-diff img').count(),0);
+ console.log('PASS: S29 VS Code read-only verified Git diff visible; malicious HTML rendered as text; no token to Webview (5/5)');
  assert.equal(errors.length,0,errors.join('; '));
  await page.screenshot({path:join(process.cwd(),'apps/vscode/dist/s26-webview.png'),fullPage:true});
  console.log('PASS: S26 browser Phaser canvas, snapshot render, refresh messages, no runtime errors (4/4)');
