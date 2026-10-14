@@ -18,6 +18,14 @@ const badge=(status)=>{const [label,kind]=STATUSES[status]??[String(status||'Des
  return <span className={'status status--'+kind}>{label}</span>;};
 const desktopMode=typeof window!=='undefined'&&Boolean(window.__TAURI__?.core?.invoke);
 const desktopInvoke=(command,args={})=>window.__TAURI__.core.invoke(command,args);
+const displayError=error=>{
+ const message=typeof error==='string'?error:error instanceof Error?error.message:'';
+ if(/Workstation session is invalid or expired|Workstation not enrolled/i.test(message))
+  return 'A inscrição da estação foi recusada ou expirou. Use uma nova chave de inscrição válida.';
+ if(/Local API unavailable/i.test(message))
+  return 'A API local do OmnyaDesk está indisponível. Inicie o backend antes de conectar.';
+ return message||'Não foi possível concluir a operação. Verifique a conexão e tente novamente.';
+};
 const route=(projectId,path='')=>'/v1/projects/'+encodeURIComponent(projectId)+path;
 async function request(token,path,signal){
  if(desktopMode)return desktopInvoke('desktop_read',{path});
@@ -133,10 +141,10 @@ function App(){
   try{await desktopInvoke('desktop_register');const response=await desktopInvoke('desktop_restore');
    const projects=Array.isArray(response.projects)?response.projects:[];
    setDesktopProjects(projects);await activateDesktop(projects,projects.at(-1)?.id);
-  }catch(e){setError(String(e));}finally{setBusy(false);}
+  }catch(e){setError(displayError(e));}finally{setBusy(false);}
  };
  const switchDesktop=async id=>{setBusy(true);setError('');
-  try{await activateDesktop(desktopProjects,id);}catch(e){setError(String(e));}finally{setBusy(false);}
+  try{await activateDesktop(desktopProjects,id);}catch(e){setError(displayError(e));}finally{setBusy(false);}
  };
  const submit=async(ev)=>{
   ev.preventDefault();setBusy(true);setError('');
@@ -153,7 +161,7 @@ function App(){
    if(!active?.id)throw new Error('Nenhum projeto associado a este token.');
    await load(value,active.id);
    setProject(active);setToken(value);setCredential('');
-  }catch(e){setError(e.message);}
+  }catch(e){setError(displayError(e));}
   finally{setBusy(false);}
  };
  useEffect(()=>{
@@ -206,7 +214,7 @@ function App(){
   const controller=new AbortController();setEvidences([]);
   request(token,route(project.id,'/tasks/'+encodeURIComponent(selected.id)+'/evidence'),controller.signal)
    .then(data=>{if(!controller.signal.aborted)setEvidences(Array.isArray(data.evidence)?data.evidence:[]);})
-   .catch(err=>{if(!controller.signal.aborted)setError(err.message);});
+   .catch(err=>{if(!controller.signal.aborted)setError(displayError(err));});
   return()=>controller.abort();
  },[token,project?.id,selected?.id]);
  const visible=useMemo(()=>tasks.filter(task=>
@@ -218,7 +226,7 @@ function App(){
   review:tasks.filter(t=>t.status==='awaiting_approval').length,
   done:tasks.filter(t=>t.status==='approved').length};
  const refresh=async()=>{if(!token||!project)return;setBusy(true);setError('');
-  try{await load(token,project.id);}catch(e){setError(e.message);}finally{setBusy(false);}};
+  try{await load(token,project.id);}catch(e){setError(displayError(e));}finally{setBusy(false);}};
  return <div className="app">
   <aside className="rail">
    <div className="brand"><div className="brand-logo">O<span>✦</span></div><div><strong>OmnyaDesk</strong><small>CONTROL CENTER</small></div></div>

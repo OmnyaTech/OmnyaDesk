@@ -15,7 +15,8 @@ process.env.OMNYA_WORKSTATION_ALLOWED_ROOTS=root;
 const pool=createPool(process.env.DATABASE_URL);
 await runMigrations(pool);
 const registry=new WorkstationRegistry(pool),subjectId=randomUUID();
-const session=await registry.issue(subjectId,1);
+// Manual Windows QA may span several hours; never use this fixture outside the synthetic flag.
+const session=await registry.issue(subjectId,24);
 const repo=new PostgresOfficeRepository(pool);
 for(const name of ['Synthetic Alpha','Synthetic Beta']){
  const dir=join(root,name);await mkdir(dir);

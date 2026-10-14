@@ -46,6 +46,7 @@ try{
    calls.push(command);
    if(command==='desktop_restore'){if(!enrolled)throw Error('Not enrolled');return {projects:registered};}
    if(command==='desktop_login'){
+    if(args.value==='ods_'+'b'.repeat(64))throw 'Workstation session is invalid or expired';
     if(!/^ods_[a-f0-9]{64}$/.test(args.value))throw Error('Invalid key');
     enrolled=true;return {projects:registered};
    }
@@ -82,6 +83,10 @@ try{
  page.on('request',req=>{if(req.url().includes('/v1/'))outbound.push(req.url());});
  await page.goto('http://127.0.0.1:'+port+'/',{waitUntil:'load'});
  await page.getByRole('heading',{name:'Conecte seu projeto'}).waitFor();
+ await page.getByLabel('Chave de inscrição da estação').fill('ods_'+'b'.repeat(64));
+ await page.getByRole('button',{name:'Conectar com segurança'}).click();
+ await page.getByRole('alert').getByText('A inscrição da estação foi recusada ou expirou. Use uma nova chave de inscrição válida.').waitFor();
+ await page.getByRole('button',{name:'Conectar com segurança'}).waitFor({state:'visible'});
  await page.getByLabel('Chave de inscrição da estação').fill('ods_'+'a'.repeat(64));
  await page.getByRole('button',{name:'Conectar com segurança'}).click();
  await page.getByRole('heading',{name:'Cadastre seu primeiro projeto'}).waitFor();
