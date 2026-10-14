@@ -108,6 +108,24 @@ export class EvidenceLedger{
   await this.verify(projectId,taskId,item.kind,item.scope_key,db);
   return this.row(item);
  }
+ async listSummaries(projectId:string,taskId:string):Promise<Array<Pick<EvidenceEntry,
+ 'id'|'projectId'|'taskId'|'runId'|'kind'|'scopeKey'|'actorId'|'version'|
+ 'contentSha256'|'previousChain'|'chainSha256'|'createdAt'>>>{
+  UuidSchema.parse(projectId);UuidSchema.parse(taskId);
+  // Never return content or arbitrary metadata to the dashboard.
+  const rows=await this.pool.query<Row>(
+   'SELECT id,project_id,task_id,run_id,kind,scope_key,actor_id,version,content_sha256,previous_chain,chain_sha256,created_at FROM evidence_entries WHERE project_id=$1 AND task_id=$2 ORDER BY created_at DESC,id DESC LIMIT 100',
+   [projectId,taskId]);
+  const groups=new Map(rows.rows.map(row=>[row.kind+':'+row.scope_key,row]));
+  // Verify every represented chain, even when there are more than 100 scopes.
+  for(const group of groups.values())await this.verify(projectId,taskId,group.kind,group.scope_key);
+  return rows.rows.map(r=>({
+   id:r.id,projectId:r.project_id,taskId:r.task_id,runId:r.run_id,
+   kind:r.kind,scopeKey:r.scope_key,actorId:r.actor_id,version:r.version,
+   contentSha256:r.content_sha256.trim(),previousChain:r.previous_chain?.trim()??null,
+   chainSha256:r.chain_sha256.trim(),createdAt:r.created_at.toISOString()
+  }));
+ }
  async list(projectId:string,taskId:string,kind:string,scopeKey:string):Promise<EvidenceEntry[]>{
   await this.verify(projectId,taskId,kind,scopeKey);
   const rows=await this.pool.query<Row>(

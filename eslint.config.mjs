@@ -7,6 +7,10 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    files: ['apps/web/operator/**/*.{jsx,js}'],
+    languageOptions: { globals: { ...globals.browser }, parserOptions: { ecmaFeatures: { jsx: true } } },
+  },
+  {
     files: ['**/*.{mjs,js,ts}'],
     languageOptions: { globals: { ...globals.node, ...globals.es2022 } },
   },

@@ -4,4 +4,5 @@ await copyFile('apps/web/index.html', 'dist/apps/web/index.html');
 await cp('infra/migrations', 'dist/infra/migrations', { recursive: true });
 await mkdir('dist/scripts', { recursive: true });
 await copyFile('scripts/remote-tool-files.py', 'dist/scripts/remote-tool-files.py');
-console.log('Static web asset, S13 trusted file helper and SQL migrations copied into dist');
+await import('../apps/web/build.mjs');
+console.log('Static web + authenticated React operator, S13 file helper and migrations copied');

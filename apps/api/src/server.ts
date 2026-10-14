@@ -1,4 +1,5 @@
 import Fastify,{type FastifyInstance,type FastifyRequest} from 'fastify';
+import {readFile} from 'node:fs/promises';
 import swagger from '@fastify/swagger';
 import {ZodError} from 'zod';
 import type {Pool} from 'pg';
@@ -12,7 +13,7 @@ import {ResourceScheduler,SchedulerConflict,SchedulerBadRequest,SchedulerNotFoun
 import {TaskIntakeService,IntakeConflict,IntakeUnauthorized,IntakeForbidden,IntakeNotFound} from '../../../packages/db/src/intake.ts';
 import {GitIntegrationQueue,IntegrationConflict,IntegrationForbidden,IntegrationNotFound} from '../../../packages/db/src/git-integration.ts';
 import {GitValidationError} from '../../../packages/db/src/git-driver.ts';
-import {EvidenceIntegrityError} from '../../../packages/db/src/evidence-ledger.ts';
+import {EvidenceIntegrityError,EvidenceLedger} from '../../../packages/db/src/evidence-ledger.ts';
 
 const uuid={type:'string',format:'uuid'} as const;
 const projectParams={type:'object',required:['projectId'],additionalProperties:false,
@@ -33,7 +34,7 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
  const api=Fastify({logger:false,bodyLimit:8192,ajv:{customOptions:{removeAdditional:false}}});
  const repo=new PostgresOfficeRepository(pool),flows=new TaskOrchestrator(pool),tokens=new TokenStore(pool);
  const hub=new ProjectSseHub(flows,tokens),intake=new TaskIntakeService(pool),scheduler=new ResourceScheduler(pool);
- const integrations=new GitIntegrationQueue(pool);
+ const integrations=new GitIntegrationQueue(pool),evidence=new EvidenceLedger(pool);
  await api.register(swagger,{openapi:{
   info:{title:'OmnyaDesk Local API',version:'1.0.0-s11',description:'Local PostgreSQL API; no public exposure before security/release gates.'},
   components:{securitySchemes:{bearerToken:{type:'http',scheme:'bearer',bearerFormat:'opaque'}}},
@@ -74,6 +75,21 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
   // Never include SQL errors, raw tokens, request headers or stack traces in responses.
   return res.code(500).send({error:'Internal server error'});
  });
+ // Public shell contains no secrets; every data request is independently scoped.
+ for(const [path,file,contentType] of [
+  ['/operator','index.html','text/html; charset=utf-8'],
+  ['/operator/app.js','app.js','text/javascript; charset=utf-8'],
+  ['/operator/app.css','app.css','text/css; charset=utf-8']
+ ]as const){
+  api.get(path,{schema:{hide:true}},async(_req,reply)=>{
+   const bytes=await readFile(new URL('../../web/operator/'+file,import.meta.url));
+   return reply.header('content-type',contentType).header('cache-control','no-store')
+    .header('x-content-type-options','nosniff').header('referrer-policy','no-referrer')
+    .header('x-frame-options','DENY')
+    .header('content-security-policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+    .send(bytes);
+  });
+ }
  api.get('/openapi.json',{schema:{hide:true}},async()=>api.swagger());
  api.get('/v1/status',{schema:{tags:['system'],response:{200:{type:'object',properties:{ok:{type:'boolean'},mode:{type:'string'}}}}}},
   async()=>({ok:true,mode:'persistent-postgres-authenticated'}));
@@ -97,6 +113,16 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
    guard(req,'tasks:read',req.params.projectId);
    return {tasks:await repo.listTasks(req.params.projectId)};
   });
+ api.get<{Params:{projectId:string;taskId:string}}>('/v1/projects/:projectId/tasks/:taskId/evidence',{
+  schema:{...secured('tasks:read'),params:taskParams,tags:['evidence'],
+   description:'Project-scoped immutable evidence summaries, never raw content or metadata.'}
+ },async(req)=>{
+  guard(req,'tasks:read',req.params.projectId);
+  const found=await pool.query('SELECT 1 FROM tasks WHERE project_id=$1 AND id=$2',
+   [req.params.projectId,req.params.taskId]);
+  if(!found.rowCount)throw httpError(404,'Not found');
+  return {evidence:await evidence.listSummaries(req.params.projectId,req.params.taskId)};
+ });
  const intakeSchema={...secured('tasks:create'),params:projectParams,tags:['intake'],
   description:'Single authenticated task ingress. Supply Idempotency-Key UUID; origin and actor come from the token.',
   headers:{type:'object',required:['idempotency-key'],properties:{'idempotency-key':uuid}},

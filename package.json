@@ -38,7 +38,8 @@
     "smoke:provider": "node scripts/smoke-provider.mjs",
     "smoke:four-role": "node scripts/smoke-four-role.mjs",
     "smoke:resilience": "node scripts/smoke-resilience.mjs",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run smoke:build && pnpm run smoke:worker && pnpm run smoke:auth && pnpm run smoke:sse && pnpm run smoke:mcp && pnpm run smoke:scheduler && pnpm run smoke:git && pnpm run smoke:sandbox && pnpm run smoke:tools && pnpm run smoke:provider && pnpm run smoke:four-role && pnpm run smoke:resilience"
+    "smoke:operator": "node scripts/smoke-operator.mjs",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run smoke:build && pnpm run smoke:worker && pnpm run smoke:auth && pnpm run smoke:sse && pnpm run smoke:mcp && pnpm run smoke:scheduler && pnpm run smoke:git && pnpm run smoke:sandbox && pnpm run smoke:tools && pnpm run smoke:provider && pnpm run smoke:four-role && pnpm run smoke:resilience && pnpm run smoke:operator"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",
