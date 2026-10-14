@@ -1,1 +1,1 @@
-{"name":"@omnyadesk/web","private":true,"type":"module","dependencies":{"react":"19.2.0","react-dom":"19.2.0"},"devDependencies":{"@types/react":"19.2.2","@types/react-dom":"19.2.2","esbuild":"0.25.12","playwright-core":"1.56.1"}}
+{"name":"@omnyadesk/web","private":true,"type":"module","dependencies":{"phaser":"3.90.0","react":"19.2.0","react-dom":"19.2.0"},"devDependencies":{"@types/react":"19.2.2","@types/react-dom":"19.2.2","esbuild":"0.25.12","playwright-core":"1.56.1"}}

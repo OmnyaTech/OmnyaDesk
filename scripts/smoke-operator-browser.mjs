@@ -72,6 +72,33 @@ try{
  await page.getByLabel('Token de acesso').fill(TOKEN);
  await page.getByRole('button',{name:'Conectar com segurança'}).click();
  await page.getByRole('heading',{name:'S20 projeto sintético'}).waitFor();
+ // S21: actual Phaser canvas, original four stations, zoom and camera navigation.
+ await page.getByRole('heading',{name:/Escritório 2D/}).waitFor();
+ await page.getByText('Mapa navegável').waitFor({timeout:20000});
+ const canvas=page.locator('[data-office-map="phaser"] canvas');
+ assert.equal(await canvas.count(),1,'Exactly one Phaser canvas');
+ const geometry=await canvas.evaluate(el=>({width:el.width,height:el.height}));
+ assert.ok(geometry.width>=900&&geometry.height>=400);
+ for(const name of ['Arquitetura','Desenvolvimento','Qualidade','Revisão'])
+  assert.equal(await page.getByRole('button',{name,exact:true}).count(),1);
+ await page.getByRole('button',{name:'Arquitetura',exact:true}).click();
+ await page.waitForTimeout(180);
+ const before=await canvas.screenshot();
+ await page.getByRole('button',{name:'Revisão',exact:true}).click();
+ await page.waitForTimeout(180);
+ const after=await canvas.screenshot();
+ assert.equal(before.equals(after),false,'Camera focus must actually change rendered pixels');
+ await page.getByRole('button',{name:'Ampliar zoom'}).click();
+ await page.getByLabel('Nível do zoom').getByText('115%').waitFor();
+ await page.getByRole('button',{name:'Centralizar',exact:true}).click();
+ await page.getByLabel('Nível do zoom').getByText('100%').waitFor();
+ await page.getByRole('button',{name:'Mover câmera para esquerda'}).click();
+ await page.locator('[data-office-map="phaser"]').focus();
+ await page.keyboard.press('ArrowRight');
+ await page.waitForTimeout(120);
+ assert.deepEqual(errors,[],'No JavaScript errors in Phaser scene');
+ await page.screenshot({path:join(process.cwd(),'dist','apps','web','operator','s21-office-desktop.png'),fullPage:true});
+ console.log('PASS: S21 Phaser canvas, 4 roles, camera station focus, keyboard, zoom and reset (10/10)');
  await page.getByRole('button',{name:'Abrir detalhes de Revisar execução de testes S20'}).click();
  await page.getByText('SHA-256 cccccccc…').waitFor();
  await page.getByText('task.created').waitFor();
@@ -92,6 +119,8 @@ try{
  assert.equal(await page.getByRole('button',{name:'Aprovar'}).count(),0);
  await page.screenshot({path:join(process.cwd(),'dist','apps','web','operator','s20-desktop-smoke.png')});
  await page.setViewportSize({width:390,height:844});
+ await page.getByText('Mapa navegável').waitFor();
+ await page.screenshot({path:join(process.cwd(),'dist','apps','web','operator','s21-office-mobile.png'),fullPage:true});
  await page.screenshot({path:join(process.cwd(),'dist','apps','web','operator','s20-mobile-smoke.png')});
  const overflow=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth);
  if(overflow>3){const offenders=await page.evaluate(()=>[...document.querySelectorAll('body *')].filter(el=>el.getBoundingClientRect().right>window.innerWidth+4).slice(0,12).map(el=>({node:el.tagName,className:String(el.className).slice(0,60),width:Math.round(el.getBoundingClientRect().width),right:Math.round(el.getBoundingClientRect().right)})));console.log('S20_MOBILE_OVERFLOW_CLASSES='+JSON.stringify(offenders));}

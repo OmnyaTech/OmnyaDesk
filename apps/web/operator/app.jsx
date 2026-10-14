@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useMemo,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './styles.css';
+import {OfficeWorld} from './world/OfficeWorld.jsx';
 const STATUSES={
  created:['Criada','neutral'],queued:['Na fila','neutral'],planning:['Planejamento','active'],
  implementing:['Desenvolvimento','active'],testing:['Testes','active'],
@@ -149,6 +150,7 @@ function App(){
    <nav aria-label="Navegação principal">
     <a href="#overview" className="nav-item selected"><Icon name="grid"/> Visão geral</a>
     <a href="#tasks" className="nav-item"><Icon name="layers"/> Projetos e tarefas</a>
+    <a href="#world" className="nav-item"><Icon name="grid"/> Escritório 2D</a>
     <a href="#timeline" className="nav-item"><Icon name="activity"/> Linha do tempo</a>
     <a href="#evidence" className="nav-item"><Icon name="shield"/> Evidências</a>
    </nav>
@@ -167,6 +169,7 @@ function App(){
     </div></main>:<main className="main" aria-live="off">
     {error&&<div className="alert" role="alert">{error}<button aria-label="Fechar aviso" onClick={()=>setError('')}>×</button></div>}
     <div className="project-banner"><div className="project-mark"><Icon name="layers" size={22}/></div><div className="project-summary"><span className="eyebrow">PROJETO AUTORIZADO</span><h2>{project.name}</h2><span>ID {shortId(project.id)} · Acesso limitado ao projeto do token</span></div><div className="banner-right"> <span className="mini-label">DADOS DE ORIGEM</span><strong>PostgreSQL / API v1</strong><small>Última consulta: {fmtDate(lastRefresh)}</small></div></div>
+    <OfficeWorld/>
     <section className="metrics" aria-label="Indicadores do projeto">
      <div className="metric"><div className="metric-head">Total de tarefas <Icon name="layers"/></div><strong>{tasks.length}</strong><small>Registradas neste projeto</small></div>
      <div className="metric"><div className="metric-head">Em execução <Icon name="activity"/></div><strong>{counts.active}</strong><small>Etapas ativas reportadas</small></div>

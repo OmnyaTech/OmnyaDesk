@@ -25,7 +25,13 @@ try{
  assert.match(js.body,/projects/);assert.match(js.body,/stream/);
  assert.match(js.body,/evidence/);count++;
  assert.ok(!js.body.includes('odt_'+'f'.repeat(64)));
- assert.ok(!js.body.includes('localStorage')&&!js.body.includes('sessionStorage'));
+ const appSource=await readFile('apps/web/operator/app.jsx','utf8');
+ const sceneSource=await readFile('apps/web/operator/world/OfficeWorld.jsx','utf8');
+ // Third-party Phaser may reference storage APIs in its runtime, but first-party
+ // operator code must never store Bearer credentials. Browser E2E asserts empty
+ // localStorage/sessionStorage after login, logout and reload.
+ for(const owned of [appSource,sceneSource])
+  assert.ok(!/localStorage|sessionStorage/.test(owned),'First-party storage access prohibited');
  assert.ok(!page.body.includes('unsafe-inline'));count++;
  const unauthorized=await api.inject({method:'GET',url:'/v1/projects'});
  assert.equal(unauthorized.statusCode,401);count++;

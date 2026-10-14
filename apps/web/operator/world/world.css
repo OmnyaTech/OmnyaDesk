@@ -1,0 +1,11 @@
+
+.world-surface{margin:20px 0 24px;overflow:hidden}.world-heading{padding-bottom:14px}.world-state{background:#183c42;color:#a0e3d9;border:1px solid #286866;font-size:11px;padding:7px 12px;border-radius:20px}
+.world-view{margin:0 18px;background:#12253a;min-height:300px;height:clamp(310px,32vw,465px);border:1px solid #385875;border-radius:12px;overflow:hidden;outline-offset:-3px}
+.world-view canvas{display:block;image-rendering:pixelated}.world-view:focus-visible{outline:3px solid #6aafff}
+.world-toolbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding:16px 18px 6px}
+.world-role-nav,.world-controls{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
+.world-role-nav button,.world-controls button{border:1px solid #385370;border-radius:8px;background:#1c3651;color:#c8dcf5;padding:9px 11px;font-size:11px;font-weight:650;min-height:36px}
+.world-role-nav button:hover,.world-controls button:hover{background:#2b5376}.world-controls span{color:#92b4d5;font-size:11px;min-width:38px;text-align:center}
+.world-controls button[aria-label]{min-width:34px;font-size:15px}
+.world-note{margin:8px 18px 17px;font-size:11px;color:#8da7c4;line-height:1.5}
+@media(max-width:720px){.world-heading{align-items:flex-start;flex-direction:column}.world-view{height:320px;min-height:0;margin:0 11px}.world-toolbar{padding:13px 11px}.world-note{margin:8px 11px 15px}}
