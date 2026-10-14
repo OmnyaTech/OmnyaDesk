@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
 import './world.css';
+import './projection.css';
 import {useEffect,useRef,useState} from 'react';
 
 import {OFFICE_WIDTH,OFFICE_HEIGHT,TILE_SIZE,ROLES,clampZoom,focusPoint} from './layout.mjs';
+import {projectOffice} from './projector.mjs';
 
 function drawPerson(scene,role){
  const texture='s21-avatar-'+role.id;
@@ -21,7 +23,7 @@ function drawPerson(scene,role){
   rect(0x132437,10,44,11,4);rect(0x132437,24,44,11,4);
   sprite.generateTexture(texture,44,64);sprite.destroy();
  }
- scene.add.image(role.x+114,role.y+68,texture).setOrigin(.5,.8).setDepth(8);
+ return scene.add.image(role.x+114,role.y+68,texture).setOrigin(.5,.8).setDepth(8);
 }
 
 function drawStation(scene,role){
@@ -53,11 +55,16 @@ function drawStation(scene,role){
   fontFamily:'Arial,sans-serif',fontSize:'17px',color:'#dceaf6',
   backgroundColor:'#153044',padding:{left:9,right:9,top:5,bottom:5},resolution:2
  }).setDepth(10);
- drawPerson(scene,role);
+ const avatar=drawPerson(scene,role);
+ const indicator=scene.add.text(x-133,y+68,'Sem atividade registrada',{
+  fontFamily:'Consolas,monospace',fontSize:'13px',color:'#92aabf',
+  backgroundColor:'#172c3f',padding:{left:7,right:7,top:4,bottom:4},resolution:2
+ }).setDepth(12);
+ return {avatar,indicator,role,lastPhase:'idle',lastTask:null,tween:null,baseY:avatar.y};
 }
 
 export class OfficeScene extends Phaser.Scene{
- constructor(onReady){super({key:'OmnyaOffice'});this.onReady=onReady;this.keys=null;}
+ constructor(onReady){super({key:'OmnyaOffice'});this.onReady=onReady;this.keys=null;this.stationSprites=new Map();this.currentProjection=null;}
  create(){
   // Project-owned procedural tileset. No remote assets or unlicensed art.
   const tileKey='s21-floor-tiles';
@@ -90,7 +97,7 @@ export class OfficeScene extends Phaser.Scene{
    g.fillStyle(0x315977,.9).fillRect(x,27,120,18);
    g.fillStyle(0x6ca5bf).fillRect(x+9,29,102,9);
   }
-  for(const role of ROLES)drawStation(this,role);
+  for(const role of ROLES)this.stationSprites.set(role.id,drawStation(this,role));
   this.cameras.main.setBounds(0,0,OFFICE_WIDTH,OFFICE_HEIGHT);
   this.cameras.main.centerOn(OFFICE_WIDTH/2,OFFICE_HEIGHT/2);
   this.cameras.main.setRoundPixels(true);
@@ -110,6 +117,26 @@ export class OfficeScene extends Phaser.Scene{
    this.setZoom(this.cameras.main.zoom+(deltaY>0?-.1:.1));
   });
   this.onReady(this);
+ }
+ applyProjection(projection){
+  this.currentProjection=projection;
+  for(const value of projection.roles){
+   const entry=this.stationSprites.get(value.id);
+   if(!entry)continue;
+   const active=value.phase==='working',waiting=value.phase==='waiting';
+   const label=active?'Ativa • '+value.total+' tarefa(s)':waiting?'Revisão humana pendente':
+    value.phase==='paused'?'Dados sem conexão':'Sem atividade registrada';
+   entry.indicator.setText(label);
+   entry.indicator.setColor(active?'#8de0bd':waiting?'#f7d19b':'#92aabf');
+   entry.indicator.setAlpha(value.phase==='paused'?.65:1);
+   entry.avatar.setAlpha(value.phase==='paused'?.55:1);
+   if(entry.lastPhase===value.phase&&entry.lastTask===value.taskId)continue;
+   entry.tween?.stop();entry.tween=null;
+   entry.avatar.y=entry.baseY;
+   if(active)entry.tween=this.tweens.add({targets:entry.avatar,y:entry.baseY-5,
+    duration:480,yoyo:true,repeat:-1,ease:'Sine.inOut'});
+   entry.lastPhase=value.phase;entry.lastTask=value.taskId;
+  }
  }
  update(_time,delta){
   if(!this.keys)return;
@@ -131,9 +158,10 @@ export class OfficeScene extends Phaser.Scene{
  reset(){this.cameras.main.setZoom(1);this.cameras.main.centerOn(800,490);}
 }
 
-export function OfficeWorld(){
+export function OfficeWorld({projectId,tasks=[],events=[],historyComplete=true,connection='offline'}){
  const host=useRef(null),scene=useRef(null),game=useRef(null);
  const [ready,setReady]=useState(false),[zoom,setZoom]=useState(1);
+ const projection=projectOffice({projectId,tasks,events,historyComplete,connection});
  useEffect(()=>{
   if(!host.current)return;
   let alive=true;
@@ -147,6 +175,7 @@ export function OfficeWorld(){
   game.current=instance;
   return()=>{alive=false;scene.current=null;game.current=null;instance.destroy(true);};
  },[]);
+ useEffect(()=>{if(ready)scene.current?.applyProjection(projection);},[ready,projectId,tasks,events,historyComplete,connection]);
  const applyZoom=delta=>{
   if(scene.current)setZoom(scene.current.setZoom(scene.current.cameras.main.zoom+delta));
  };
@@ -154,7 +183,7 @@ export function OfficeWorld(){
  return <section className="surface world-surface" id="world" aria-label="Escritório virtual 2D">
   <div className="surface-heading world-heading">
    <div><span className="eyebrow">AMBIENTE VIRTUAL / S21</span><h2>Escritório 2D <span className="count">4 estações</span></h2></div>
-   <span className="world-state" role="status">{ready?'Mapa navegável':'Carregando mapa…'}</span>
+   <span className="world-state" role="status">{!ready?'Carregando mapa…':!projection.connected?'Sem conexão ativa': 'Mapa navegável'}</span>
   </div>
   <div className="world-view" ref={host} data-office-map="phaser" tabIndex={0}
    aria-label="Mapa Phaser, quatro estações de trabalho. Use setas ou WASD para mover a câmera, ou os botões abaixo."
@@ -175,6 +204,16 @@ export function OfficeWorld(){
     <button onClick={()=>{scene.current?.reset();setZoom(1);}} disabled={!ready}>Centralizar</button>
    </div>
   </div>
-  <p className="world-note">Cenário estático com personagens e estações ilustrativos, sem simular trabalho dos agentes. Estados animados serão conectados aos eventos reais na S22. Arraste para mover a câmera; use as setas, WASD ou botões acima.</p>
+  <div className="world-roles" aria-label="Estado persistido por estação" role="list">
+   {projection.roles.map(role=><div key={role.id} role="listitem" className={'world-role world-role--'+role.phase}>
+    <strong>{role.name}</strong>
+    <span>{role.phase==='working'?'Em execução — '+role.total+' tarefa(s)':role.phase==='waiting'?'Aguardando aprovação humana':role.phase==='paused'?'Sem atualização em tempo real':'Sem atividade registrada'}</span>
+   </div>)}
+  </div>
+  <p className="world-note" data-replay={projection.replay.lastSequence}>
+   Dados: estados persistidos no projeto autorizado. Eventos ordenados e reconciliados após reconexão
+   (até {projection.replay.applied} transições verificáveis; {projection.replay.complete?'histórico carregado':'histórico parcial'}).
+   Quando desconectado, animações são suspensas; nenhuma atividade é simulada. Arraste, use WASD ou os controles da câmera.
+  </p>
  </section>;
 }

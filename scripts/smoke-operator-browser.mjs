@@ -8,7 +8,7 @@ import {chromium} from '../apps/web/node_modules/playwright-core/index.mjs';
 const TOKEN='odt_'+'a'.repeat(64);
 const PROJECT='11111111-1111-4111-8111-111111111111';
 const TASK='22222222-2222-4222-8222-222222222222';
-let status='planning',projectCalls=0;
+let status='planning',projectCalls=0,streamOffline=false;
 const sockets=new Set();
 const folder=join(process.cwd(),'dist','apps','web','operator');
 const assets=new Map([
@@ -24,8 +24,19 @@ const task=()=>({id:TASK,projectId:PROJECT,officeId:PROJECT,requestedBy:PROJECT,
 const entry={id:PROJECT,projectId:PROJECT,taskId:TASK,runId:PROJECT,kind:'log',
  scopeKey:'synthetic',actorId:'test',version:1,contentSha256:'b'.repeat(64),
  chainSha256:'c'.repeat(64),previousChain:null,createdAt:now};
-const ev=()=>({schemaVersion:1,eventId:PROJECT,sequence:1,occurredAt:now,
- projectId:PROJECT,taskId:TASK,type:'task.created',actor:{kind:'system'}});
+const timeline=[
+ {schemaVersion:1,eventId:PROJECT,sequence:1,occurredAt:now,
+  projectId:PROJECT,taskId:TASK,type:'task.created',actor:{kind:'system'}},
+ {schemaVersion:1,eventId:PROJECT,sequence:2,occurredAt:now,
+  projectId:PROJECT,taskId:TASK,type:'task.status_changed',
+  payload:{from:'created',to:'planning'},actor:{kind:'system'}}
+];
+function transition(from,to){
+ timeline.push({schemaVersion:1,eventId:PROJECT,sequence:timeline.length+1,
+  occurredAt:new Date().toISOString(),projectId:PROJECT,taskId:TASK,
+  type:'task.status_changed',payload:{from,to},actor:{kind:'system'}});
+ status=to;
+}
 const server=createServer(async(req,res)=>{
  const url=new URL(req.url||'/', 'http://localhost');
  const path=url.pathname;
@@ -41,9 +52,10 @@ const server=createServer(async(req,res)=>{
  if(req.headers.authorization!=='Bearer '+TOKEN){res.writeHead(401);res.end('{"error":"unauthorized"}');return;}
  if(path==='/v1/projects'){res.end(JSON.stringify({projects:[project]}));return;}
  if(path==='/v1/projects/'+PROJECT+'/tasks'){res.end(JSON.stringify({tasks:[task()]}));return;}
- if(path==='/v1/projects/'+PROJECT+'/events'){res.end(JSON.stringify({events:[ev()]}));return;}
+ if(path==='/v1/projects/'+PROJECT+'/events'){const after=Number(url.searchParams.get('after')||0);res.end(JSON.stringify({events:timeline.filter(event=>event.sequence>after).slice(0,500)}));return;}
  if(path==='/v1/projects/'+PROJECT+'/tasks/'+TASK+'/evidence'){res.end(JSON.stringify({evidence:[entry]}));return;}
  if(path==='/v1/projects/'+PROJECT+'/stream'){
+  if(streamOffline){res.writeHead(503);res.end('{"error":"test-sse-outage"}');return;}
   res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache'});
   res.write(': ready\n\n');sockets.add(res);req.on('close',()=>sockets.delete(res));return;
  }
@@ -107,8 +119,27 @@ try{
  await page.getByText('Nenhuma tarefa encontrada').waitFor();
  await page.getByPlaceholder('Buscar tarefa por título…').fill('');
  await page.getByRole('status').getByText('Tempo real ativo').waitFor();
- status='awaiting_approval';
- for(const socket of sockets)socket.write('id: 2\nevent: office\ndata: {"id":2}\n\n');
+ await page.getByRole('listitem').filter({hasText:'Arquiteto'}).getByText('Em execução — 1 tarefa(s)').waitFor();
+ // An isolated SSE transport outage must immediately freeze sprites without
+ // pretending that a task has stopped in the database.
+ streamOffline=true;
+ for(const socket of sockets)socket.end();
+ await page.getByText('Sem conexão ativa').waitFor({timeout:12000});
+ await page.getByRole('listitem').filter({hasText:'Arquiteto'}).getByText('Sem atualização em tempo real').waitFor();
+ transition('planning','implementing');
+ streamOffline=false;
+ await page.getByRole('status').getByText('Tempo real ativo').waitFor({timeout:15000});
+ await page.getByRole('listitem').filter({hasText:'Desenvolvedor'}).getByText('Em execução — 1 tarefa(s)').waitFor();
+ const projected=await page.locator('[data-replay]').getAttribute('data-replay');
+ assert.equal(projected,'3','Recovered scene must replay domain events deterministically');
+ await page.screenshot({path:join(process.cwd(),'dist','apps','web','operator','s22-replayed-active.png'),fullPage:true});
+ transition('implementing','testing');
+ transition('testing','reviewing');
+ transition('reviewing','awaiting_approval');
+ for(const socket of sockets)socket.write('id: 6\nevent: office\ndata: {"id":6}\n\n');
+ await page.getByRole('listitem').filter({hasText:'Revisor'}).getByText('Aguardando aprovação humana').waitFor();
+ assert.equal(await page.locator('.world-role--working').count(),0,'Review wait must not animate work');
+ console.log('PASS: S22 real SSE outage freezes sprites, event replay and canonical resync, human review remains paused (10/10)');
  await page.getByText('Aguardando revisão',{exact:true}).first().waitFor();
  const secrets=await page.evaluate(()=>({
   ls:Object.keys(localStorage),ss:Object.keys(sessionStorage),
@@ -121,6 +152,7 @@ try{
  await page.setViewportSize({width:390,height:844});
  await page.getByText('Mapa navegável').waitFor();
  await page.screenshot({path:join(process.cwd(),'dist','apps','web','operator','s21-office-mobile.png'),fullPage:true});
+ await page.screenshot({path:join(process.cwd(),'dist','apps','web','operator','s22-review-mobile.png'),fullPage:true});
  await page.screenshot({path:join(process.cwd(),'dist','apps','web','operator','s20-mobile-smoke.png')});
  const overflow=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth);
  if(overflow>3){const offenders=await page.evaluate(()=>[...document.querySelectorAll('body *')].filter(el=>el.getBoundingClientRect().right>window.innerWidth+4).slice(0,12).map(el=>({node:el.tagName,className:String(el.className).slice(0,60),width:Math.round(el.getBoundingClientRect().width),right:Math.round(el.getBoundingClientRect().right)})));console.log('S20_MOBILE_OVERFLOW_CLASSES='+JSON.stringify(offenders));}

@@ -2,6 +2,7 @@ import {useCallback,useEffect,useMemo,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './styles.css';
 import {OfficeWorld} from './world/OfficeWorld.jsx';
+import {REPLAY_MAX_EVENTS} from './world/projector.mjs';
 const STATUSES={
  created:['Criada','neutral'],queued:['Na fila','neutral'],planning:['Planejamento','active'],
  implementing:['Desenvolvimento','active'],testing:['Testes','active'],
@@ -81,20 +82,31 @@ function App(){
  const [credential,setCredential]=useState('');
  const [token,setToken]=useState(null),[project,setProject]=useState(null);
  const [tasks,setTasks]=useState([]),[events,setEvents]=useState([]);
+ const [eventHistory,setEventHistory]=useState([]),[historyComplete,setHistoryComplete]=useState(true);
  const [selectedId,setSelectedId]=useState(null),[evidences,setEvidences]=useState([]);
  const [filter,setFilter]=useState('all'),[search,setSearch]=useState('');
  const [busy,setBusy]=useState(false),[error,setError]=useState('');
  const [connection,setConnection]=useState('offline'),[lastRefresh,setLastRefresh]=useState(null);
  const disconnect=useCallback(()=>{setToken(null);setCredential('');setProject(null);
-  setTasks([]);setEvents([]);setSelectedId(null);setEvidences([]);setConnection('offline');
+  setTasks([]);setEvents([]);setEventHistory([]);setHistoryComplete(true);setSelectedId(null);setEvidences([]);setConnection('offline');
   setError('');},[]);
  const load=useCallback(async(secret,scopeId,signal)=>{
-  const [taskData,eventData]=await Promise.all([
-   request(secret,route(scopeId,'/tasks'),signal),
-   request(secret,route(scopeId,'/events'),signal)
-  ]);
+  const taskData=await request(secret,route(scopeId,'/tasks'),signal);
+  const history=[];let after=0,complete=false;
+  while(history.length<REPLAY_MAX_EVENTS){
+   const page=await request(secret,route(scopeId,'/events?after='+after),signal);
+   const batch=Array.isArray(page.events)?page.events:[];
+   if(!batch.every(event=>Number.isSafeInteger(event.sequence)&&event.sequence>after))
+    throw new Error('Sequência inválida ao recuperar eventos persistidos.');
+   history.push(...batch);
+   if(batch.length<500){complete=true;break;}
+   after=batch[batch.length-1].sequence;
+  }
+  if(signal?.aborted)return;
   setTasks(Array.isArray(taskData.tasks)?taskData.tasks:[]);
-  setEvents(Array.isArray(eventData.events)?eventData.events.slice().reverse():[]);
+  setEventHistory(history.slice(0,REPLAY_MAX_EVENTS));
+  setHistoryComplete(complete);
+  setEvents(history.slice(-500).reverse());
   setLastRefresh(new Date().toISOString());
  },[]);
  const submit=async(ev)=>{
@@ -112,15 +124,27 @@ function App(){
  useEffect(()=>{
   if(!token||!project?.id)return;
   const controller=new AbortController(),id=project.id;
-  let ticking=false;
+  let refreshing=false,pending=false,streamOpen=false;
+  const resync=()=>{
+   pending=true;if(refreshing)return;
+   refreshing=true;setConnection('syncing');
+   void (async()=>{
+    try{
+     while(pending&&!controller.signal.aborted){
+      pending=false;
+      await load(token,id,controller.signal);
+     }
+     if(!controller.signal.aborted)setConnection(streamOpen?'online':'offline');
+    }catch{if(!controller.signal.aborted)setConnection('offline');}
+    finally{refreshing=false;}
+   })();
+  };
   void connectStream(token,id,status=>{
    if(controller.signal.aborted)return;
    if(status==='denied'){disconnect();setError('A sessão foi revogada. Reconecte com um novo token.');return;}
-   if(status==='online'||status==='offline'){setConnection(status);return;}
-   if(status==='event'&&!ticking){
-    ticking=true;void load(token,id,controller.signal).catch(()=>setConnection('offline'))
-     .finally(()=>{ticking=false;});
-   }
+   if(status==='offline'){streamOpen=false;setConnection('offline');return;}
+   if(status==='online'){streamOpen=true;resync();return;}
+   if(status==='event'&&streamOpen)resync();
   },controller.signal);
   return()=>controller.abort();
  },[token,project?.id,load,disconnect]);
@@ -169,7 +193,7 @@ function App(){
     </div></main>:<main className="main" aria-live="off">
     {error&&<div className="alert" role="alert">{error}<button aria-label="Fechar aviso" onClick={()=>setError('')}>×</button></div>}
     <div className="project-banner"><div className="project-mark"><Icon name="layers" size={22}/></div><div className="project-summary"><span className="eyebrow">PROJETO AUTORIZADO</span><h2>{project.name}</h2><span>ID {shortId(project.id)} · Acesso limitado ao projeto do token</span></div><div className="banner-right"> <span className="mini-label">DADOS DE ORIGEM</span><strong>PostgreSQL / API v1</strong><small>Última consulta: {fmtDate(lastRefresh)}</small></div></div>
-    <OfficeWorld/>
+    <OfficeWorld projectId={project.id} tasks={tasks} events={eventHistory} historyComplete={historyComplete} connection={connection}/>
     <section className="metrics" aria-label="Indicadores do projeto">
      <div className="metric"><div className="metric-head">Total de tarefas <Icon name="layers"/></div><strong>{tasks.length}</strong><small>Registradas neste projeto</small></div>
      <div className="metric"><div className="metric-head">Em execução <Icon name="activity"/></div><strong>{counts.active}</strong><small>Etapas ativas reportadas</small></div>
