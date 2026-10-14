@@ -144,6 +144,19 @@ fn clamp(placement: Placement, origin: (i32, i32), screen: (u32, u32)) -> Placem
     }
 }
 
+fn fallback_to_primary(saved: Placement, origin: (i32, i32), screen: (u32, u32)) -> Placement {
+    let dx = (screen.0.saturating_sub(saved.width) / 2).min(i32::MAX as u32) as i32;
+    let dy = (screen.1.saturating_sub(saved.height) / 2).min(i32::MAX as u32) as i32;
+    clamp(
+        Placement {
+            x: origin.0.saturating_add(dx),
+            y: origin.1.saturating_add(dy),
+            ..saved
+        },
+        origin,
+        screen,
+    )
+}
 fn current_monitor(window: &WebviewWindow) -> Result<tauri::Monitor, String> {
     window
         .current_monitor()
@@ -419,7 +432,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
             _ => (),
         });
     }
-    // Native tray stays available even when window hidden; restore last monitor only if present.
+    // Native tray stays available even when window hidden; recover available monitor geometry.
     let saved = app
         .state::<WindowSettings>()
         .preferences
@@ -434,14 +447,29 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
     if let Some((name, saved)) = saved {
         if let Some(window) = app.get_webview_window("main") {
             if let Ok(displays) = window.available_monitors() {
-                if let Some(m) = displays.iter().find(|m| monitor_key(m) == name) {
-                    let fitting = clamp(
+                let restored = if let Some(m) = displays.iter().find(|m| monitor_key(m) == name) {
+                    Some(clamp(
                         saved.clone(),
                         (m.position().x, m.position().y),
                         (m.size().width, m.size().height),
-                    );
-                    let _ = window.set_position(PhysicalPosition::new(fitting.x, fitting.y));
+                    ))
+                } else {
+                    window
+                        .primary_monitor()
+                        .ok()
+                        .flatten()
+                        .or_else(|| displays.first().cloned())
+                        .map(|m| {
+                            fallback_to_primary(
+                                saved.clone(),
+                                (m.position().x, m.position().y),
+                                (m.size().width, m.size().height),
+                            )
+                        })
+                };
+                if let Some(fitting) = restored {
                     let _ = window.set_size(PhysicalSize::new(fitting.width, fitting.height));
+                    let _ = window.set_position(PhysicalPosition::new(fitting.x, fitting.y));
                 }
             }
         }
@@ -477,6 +505,56 @@ mod tests {
         assert_eq!(fitted.width, 1000);
         let shrunk = clamp(fitted, (0, 0), (720, 500));
         assert!(shrunk.width <= 720 && shrunk.height <= 500);
+    }
+    #[test]
+    fn simulated_secondary_unplug_centers_primary() {
+        let p = Placement {
+            mode: WindowMode::Floating,
+            x: -1700,
+            y: 200,
+            width: 900,
+            height: 650,
+            always_on_top: true,
+        };
+        let restored = fallback_to_primary(p, (0, 0), (1920, 1080));
+        assert!(restored.x >= 0 && restored.y >= 0);
+        assert!(restored.x + restored.width as i32 <= 1920);
+        assert!(restored.y + restored.height as i32 <= 1080);
+        assert_eq!(restored.mode, WindowMode::Floating);
+        assert!(restored.always_on_top);
+    }
+    #[test]
+    fn simulated_mixed_dpi_and_negative_virtual_desktop() {
+        let saved = Placement {
+            mode: WindowMode::Taskbar,
+            x: -2400,
+            y: -100,
+            width: 1400,
+            height: 500,
+            always_on_top: false,
+        };
+        let second = clamp(saved.clone(), (-2560, -200), (2560, 1440));
+        assert!(second.x < 0 && second.y >= -200);
+        let small = fallback_to_primary(saved, (0, 0), (800, 600));
+        assert!(small.x >= 0 && small.y >= 0);
+        assert!(small.x + small.width as i32 <= 800);
+        assert!(small.y + small.height as i32 <= 600);
+    }
+    #[test]
+    fn simulated_secondary_right_and_primary_left() {
+        let saved = Placement {
+            mode: WindowMode::Full,
+            x: 2500,
+            y: 100,
+            width: 1700,
+            height: 1200,
+            always_on_top: false,
+        };
+        let right = clamp(saved.clone(), (1920, 0), (2560, 1440));
+        assert!(right.x >= 1920);
+        let primary = fallback_to_primary(saved, (-1920, 0), (1366, 768));
+        assert!(primary.x >= -1920 && primary.x < 0);
+        assert!(primary.y >= 0 && primary.width <= 1366 && primary.height <= 768);
     }
     #[test]
     fn preferences_do_not_deserialize_extra_privileges() {
