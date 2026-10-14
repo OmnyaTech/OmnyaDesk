@@ -64,7 +64,7 @@ function drawStation(scene,role){
 }
 
 export class OfficeScene extends Phaser.Scene{
- constructor(onReady,onInspect){super({key:'OmnyaOffice'});this.onReady=onReady;this.onInspect=onInspect;this.keys=null;this.stationSprites=new Map();this.currentProjection=null;}
+ constructor(onReady,onInspect,overview=false){super({key:'OmnyaOffice'});this.onReady=onReady;this.onInspect=onInspect;this.overview=overview;this.keys=null;this.stationSprites=new Map();this.currentProjection=null;}
  create(){
   // Project-owned procedural tileset. No remote assets or unlicensed art.
   const tileKey='s21-floor-tiles';
@@ -107,6 +107,7 @@ export class OfficeScene extends Phaser.Scene{
   this.cameras.main.setBounds(0,0,OFFICE_WIDTH,OFFICE_HEIGHT);
   this.cameras.main.centerOn(OFFICE_WIDTH/2,OFFICE_HEIGHT/2);
   this.cameras.main.setRoundPixels(true);
+  if(this.overview)this.cameras.main.setZoom(.46);
   this.keys=this.input.keyboard?.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT');
   let dragging=false,oldX=0,oldY=0;
   this.input.on('pointerdown',pointer=>{dragging=true;oldX=pointer.x;oldY=pointer.y;});
@@ -154,20 +155,20 @@ export class OfficeScene extends Phaser.Scene{
  pan(x,y){this.cameras.main.scrollX+=x/this.cameras.main.zoom;this.cameras.main.scrollY+=y/this.cameras.main.zoom;}
  setZoom(value){
   const camera=this.cameras.main,x=camera.midPoint.x,y=camera.midPoint.y;
-  camera.setZoom(clampZoom(value));camera.centerOn(x,y);
+  camera.setZoom(this.overview?Math.max(.4,Math.min(1.65,value)):clampZoom(value));camera.centerOn(x,y);
   return camera.zoom;
  }
  focusRole(id){
   const point=focusPoint(id);
   if(point)this.cameras.main.centerOn(point.x,point.y);
  }
- reset(){this.cameras.main.setZoom(1);this.cameras.main.centerOn(800,490);}
+ reset(){this.cameras.main.setZoom(this.overview?.46:1);this.cameras.main.centerOn(800,490);}
 }
 
-export function OfficeWorld({projectId,tasks=[],events=[],historyComplete=true,connection='offline',onInspectTask}){
+export function OfficeWorld({projectId,tasks=[],events=[],historyComplete=true,connection='offline',onInspectTask,overview=false}){
  const host=useRef(null),scene=useRef(null),game=useRef(null),inspectRef=useRef(onInspectTask);
  inspectRef.current=onInspectTask;
- const [ready,setReady]=useState(false),[zoom,setZoom]=useState(1);
+ const [ready,setReady]=useState(false),[zoom,setZoom]=useState(overview?.46:1);
  const projection=projectOffice({projectId,tasks,events,historyComplete,connection});
  useEffect(()=>{
   if(!host.current)return;
@@ -175,7 +176,7 @@ export function OfficeWorld({projectId,tasks=[],events=[],historyComplete=true,c
   const office=new OfficeScene(active=>{if(!alive)return;scene.current=active;setReady(true);},roleId=>{
    const role=scene.current?.currentProjection?.roles.find(item=>item.id===roleId);
    if(role?.taskId)inspectRef.current?.(role.taskId);
-  });
+  },overview);
   const instance=new Phaser.Game({type:Phaser.CANVAS,
    parent:host.current,width:940,height:450,transparent:false,
    backgroundColor:'#14273a',
@@ -219,7 +220,7 @@ export function OfficeWorld({projectId,tasks=[],events=[],historyComplete=true,c
     <button onClick={()=>applyZoom(-.15)} disabled={!ready} aria-label="Reduzir zoom">−</button>
     <span aria-label="Nível do zoom">{Math.round(zoom*100)}%</span>
     <button onClick={()=>applyZoom(.15)} disabled={!ready} aria-label="Ampliar zoom">+</button>
-    <button onClick={()=>{scene.current?.reset();setZoom(1);}} disabled={!ready}>Centralizar</button>
+    <button onClick={()=>{scene.current?.reset();setZoom(overview?.46:1);}} disabled={!ready}>Centralizar</button>
    </div>
   </div>
   <div className="world-roles" aria-label="Estado persistido por estação" role="list">

@@ -1,7 +1,7 @@
 import {useCallback,useEffect,useMemo,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './styles.css';
-import {OfficeWorld} from './world/OfficeWorld.jsx';
+import {WindowExperience} from './WindowExperiences.jsx';
 import {REPLAY_MAX_EVENTS} from './world/projector.mjs';
 const STATUSES={
  created:['Criada','neutral'],queued:['Na fila','neutral'],planning:['Planejamento','active'],
@@ -243,9 +243,11 @@ function App(){
  const counts={active:tasks.filter(t=>['planning','implementing','testing','reviewing','retrying'].includes(t.status)).length,
   review:tasks.filter(t=>t.status==='awaiting_approval').length,
   done:tasks.filter(t=>t.status==='approved').length};
+ const openModeTask=id=>{if(desktopMode&&windowPrefs.mode!=='full')void desktopWindowAction('desktop_window_mode',{mode:'full'});inspectTask(id);};
+ const showModeExperience=desktopMode&&!!project&&!!token&&windowPrefs.mode!=='full';
  const refresh=async()=>{if(!token||!project)return;setBusy(true);setError('');
   try{await load(token,project.id);}catch(e){setError(displayError(e));}finally{setBusy(false);}};
- return <div className="app">
+ return <div className="app" data-layout-active={showModeExperience?'true':'false'}>
   <aside className="rail">
    <div className="brand"><div className="brand-logo">O<span>✦</span></div><div><strong>OmnyaDesk</strong><small>CONTROL CENTER</small></div></div>
    <p className="rail-caption">WORKSPACE</p>
@@ -261,7 +263,7 @@ function App(){
   <div className="workspace">
    <header className="topbar"><div><span className="eyebrow">OMNYATECH / OPERAÇÕES</span><h1 id="overview">Painel operacional <span className="h1-star">✦</span></h1><p>Visibilidade real de projetos, execuções e evidências auditáveis.</p></div>
     <div className="top-actions">{desktopMode&&<div className="desktop-window-controls" role="group" aria-label="Modos da janela do OmnyaDesk">
-     {[['full','Completo'],['floating','Flutuante'],['taskbar','Faixa']].map(([mode,name])=><button key={mode} type="button" className={windowPrefs.mode===mode?'active':''} aria-pressed={windowPrefs.mode===mode} disabled={windowActionBusy} onClick={()=>desktopWindowAction('desktop_window_mode',{mode})}>{name}</button>)}
+     {[['full','Completo'],['compact','Compacto'],['floating','Flutuante'],['taskbar','Taskbar']].map(([mode,name])=><button key={mode} type="button" className={windowPrefs.mode===mode?'active':''} aria-pressed={windowPrefs.mode===mode} disabled={windowActionBusy} onClick={()=>desktopWindowAction('desktop_window_mode',{mode})}>{name}</button>)}
      <button type="button" className={windowPrefs.alwaysOnTop?'active':''} aria-pressed={windowPrefs.alwaysOnTop} disabled={windowActionBusy} onClick={()=>desktopWindowAction('desktop_always_on_top',{enabled:!windowPrefs.alwaysOnTop})}>Sempre no topo</button>
      <button type="button" onClick={()=>desktopWindowAction('desktop_minimize_to_tray')} disabled={windowActionBusy}>Bandeja</button>
     </div>}<span className={'connection '+(connection==='online'?'connected':'')} role="status"><span className="dot"/>{!token?'Desconectado':connection==='online'?(desktopMode?'Sincronização ativa':'Tempo real ativo'):(desktopMode?'Aguardando API local':'Aguardando stream')}</span>{token&&<button className="icon-button" title="Atualizar painel" aria-label="Atualizar painel" onClick={refresh} disabled={busy}><Icon name="refresh"/></button>}{token&&<button className="disconnect" onClick={disconnect}><Icon name="logout"/> Sair</button>}</div>
@@ -277,11 +279,12 @@ function App(){
       <p>Selecione uma pasta no Windows. O servidor validará a pasta contra as raízes explicitamente autorizadas; não são necessárias novas chaves por projeto.</p>
       {error&&<p className="form-error" role="alert">{error}</p>}
       <button className="primary" disabled={busy} onClick={registerFolder}>Escolher pasta do projeto</button>
-     </section></main>:<main className="main" aria-live="off">
+     </section></main>:<main className={'main '+(showModeExperience?'main--window-experience':'')} aria-live="off">
+    {showModeExperience?<WindowExperience mode={windowPrefs.mode} project={project} tasks={tasks} events={eventHistory} historyComplete={historyComplete} connection={connection} counts={counts} onInspectTask={openModeTask} onMode={mode=>desktopWindowAction('desktop_window_mode',{mode})} onTop={enabled=>desktopWindowAction('desktop_always_on_top',{enabled})} onTray={()=>desktopWindowAction('desktop_minimize_to_tray')} alwaysOnTop={windowPrefs.alwaysOnTop}/>:<>
     {error&&<div className="alert" role="alert">{error}<button aria-label="Fechar aviso" onClick={()=>setError('')}>×</button></div>}
     <div className="project-banner"><div className="project-mark"><Icon name="layers" size={22}/></div><div className="project-summary"><span className="eyebrow">PROJETO AUTORIZADO</span><h2>{project.name}</h2><span>ID {shortId(project.id)} · Acesso limitado ao projeto do token</span></div><div className="banner-right"> <span className="mini-label">DADOS DE ORIGEM</span><strong>PostgreSQL / API v1</strong><small>Última consulta: {fmtDate(lastRefresh)}</small></div></div>
     {desktopMode&&<div className="desktop-projects"><label htmlFor="native-project">Projeto local</label><select id="native-project" value={project.id} onChange={e=>{void switchDesktop(e.target.value);}} disabled={busy}>{desktopProjects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><button type="button" className="secondary" disabled={busy} onClick={registerFolder}>Adicionar pasta…</button></div>}
-    <OfficeWorld projectId={project.id} tasks={tasks} events={eventHistory} historyComplete={historyComplete} connection={connection} onInspectTask={inspectTask}/>
+    <WindowExperience mode="full" project={project} tasks={tasks} events={eventHistory} historyComplete={historyComplete} connection={connection} counts={counts} onInspectTask={inspectTask}/>
     {tasks.some(task=>['awaiting_approval','blocked','failed','changes_requested'].includes(task.status))&&<section className="intervention-panel" aria-label="Alertas de intervenção" role="region">
      <h2>Intervenção necessária</h2><p>Alertas baseados exclusivamente no estado persistido. Aprovações permanecem protegidas pelo fluxo S15.</p>
      <ul>{tasks.filter(task=>['awaiting_approval','blocked','failed','changes_requested'].includes(task.status)).map(task=><li key={task.id}>
@@ -321,6 +324,7 @@ function App(){
      </section>
     </div>
     <footer className="footer"><span>OmnyaDesk · Operação local autenticada</span><span>Leitura protegida por escopo · Aprovações somente pelo fluxo S15</span></footer>
+   </>}
    </main>}
   </div>
  </div>;

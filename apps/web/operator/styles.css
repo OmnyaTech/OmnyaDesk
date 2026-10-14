@@ -1,4 +1,4 @@
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#dfe7f7;background:#080d18;font-synthesis:none;font-size:14px}
+﻿:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#dfe7f7;background:#080d18;font-synthesis:none;font-size:14px}
 *{box-sizing:border-box}html{scroll-behavior:smooth}html,body{overflow-x:clip}body{margin:0;min-width:320px}button,input,select{font:inherit}button{cursor:pointer}button:disabled{cursor:wait;opacity:.55}a{color:inherit;text-decoration:none}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid #74b5ff;outline-offset:3px}
 .app{display:flex;min-height:100vh;background:radial-gradient(circle at 45% -30%,rgba(31,67,127,.2),transparent 55%),#0a101c}
 .rail{width:238px;flex:0 0 238px;background:#0c1423;border-right:1px solid #1c2b41;min-height:100vh;display:flex;flex-direction:column;padding:30px 16px 19px;position:sticky;top:0;height:100vh}
@@ -19,31 +19,15 @@
 
 .desktop-onboarding{padding:28px;max-width:720px;margin:35px auto}.desktop-onboarding p{color:#a0b5d0;line-height:1.6}.desktop-projects{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:16px 0;padding:13px;background:#101e33;border:1px solid #29435f;border-radius:12px}.desktop-projects select{color:#d5e4f7;background:#101d30;padding:10px;border-radius:8px}.desktop-projects button{margin-left:auto}
 
-/* S25 -- desktop-only window modes: browser operator remains untouched. */
+
+/* S25-REWORK: component-isolated presentation; hide the full dashboard entirely in compact modes. */
 .desktop-window-controls{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
 .desktop-window-controls button{border:1px solid #38516d;border-radius:8px;background:#18253b;color:#b9d3ef;padding:8px 9px;font-size:11px;white-space:nowrap}
 .desktop-window-controls button.active{border-color:#529af1;background:#27558a;color:#fff}
 .desktop-window-controls button:focus-visible{outline:2px solid #8ec5ff;outline-offset:2px}
-html[data-office-mode=floating] .rail,html[data-office-mode=taskbar] .rail{display:none}
-html[data-office-mode=floating] .topbar,html[data-office-mode=taskbar] .topbar{padding:10px 14px;gap:12px}
-html[data-office-mode=floating] .topbar h1,html[data-office-mode=taskbar] .topbar h1{font-size:16px;margin:2px 0}
-html[data-office-mode=floating] .topbar p,html[data-office-mode=taskbar] .topbar p,html[data-office-mode=taskbar] .topbar .eyebrow{display:none}
-html[data-office-mode=floating] .main{padding:12px}
-html[data-office-mode=floating] .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
-html[data-office-mode=floating] .content-grid{grid-template-columns:1fr}
-html[data-office-mode=taskbar] .topbar{align-items:center}
-html[data-office-mode=taskbar] .topbar .eyebrow,html[data-office-mode=taskbar] .topbar p,
-html[data-office-mode=taskbar] .project-banner,html[data-office-mode=taskbar] .metrics,
-html[data-office-mode=taskbar] .content-grid,html[data-office-mode=taskbar] .footer,
-html[data-office-mode=taskbar] .world-surface .surface-heading,
-html[data-office-mode=taskbar] .world-surface .world-toolbar,
-html[data-office-mode=taskbar] .world-surface .world-roles,
-html[data-office-mode=taskbar] .world-surface .world-note,
-html[data-office-mode=taskbar] .desktop-projects,
-html[data-office-mode=taskbar] .intervention-panel{display:none}
-html[data-office-mode=taskbar] .main{padding:5px 14px}
-html[data-office-mode=taskbar] .world-surface{height:142px}
-html[data-office-mode=taskbar] .world-view{height:140px;min-height:140px;overflow:hidden}
-html[data-office-mode=taskbar] .world-view canvas{max-width:100%;max-height:140px}
-html[data-office-mode=taskbar] .topbar .connection{padding:6px 8px}
-@media(max-width:1150px){.topbar:has(.desktop-window-controls){flex-wrap:wrap}}
+.app[data-layout-active="true"]{height:100vh;min-height:0;display:block;overflow:hidden}
+.app[data-layout-active="true"] .rail,.app[data-layout-active="true"] .topbar{display:none!important}
+.app[data-layout-active="true"] .workspace{height:100%;min-height:0;width:100%;overflow:hidden}
+.app[data-layout-active="true"] .main--window-experience{height:100%;max-width:none;padding:4px;margin:0;display:block;overflow:hidden}
+.app[data-layout-active="true"] .main--window-experience>.px-experience{height:100%;width:100%}
+@media(max-width:1200px){.topbar:has(.desktop-window-controls){flex-wrap:wrap}}

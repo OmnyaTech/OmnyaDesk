@@ -14,7 +14,18 @@ if($source -ine $destination){
  $running=Get-CimInstance Win32_Process -Filter "Name='OmnyaDesk.exe'" |
   Where-Object {$_.ExecutablePath -ieq $destination}
  foreach($process in $running){Stop-Process -Id $process.ProcessId -Force}
- Copy-Item -LiteralPath $source -Destination $destination -Force
+ # Windows holds a running executable open briefly after exit. Retry the copy, not the auth/session state.
+ $copied=$false
+ for($attempt=0;$attempt -lt 12;$attempt++){
+  try{
+   Copy-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop
+   $copied=$true
+   break
+  }catch [System.IO.IOException]{
+   Start-Sleep -Milliseconds 450
+  }
+ }
+ if(!$copied){throw 'OmnyaDesk ainda está em uso; feche a janela ou a bandeja e tente novamente.'}
 }
 if((Get-FileHash $source -Algorithm SHA256).Hash -ne
    (Get-FileHash $destination -Algorithm SHA256).Hash){throw 'Falha de integridade na instalação'}

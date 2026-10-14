@@ -49,7 +49,13 @@ test('S21 office never invents activity or carries authentication credentials',(
 test('S21 operator menu includes navigable world and accessible camera controls',()=>{
  const app=readFileSync('apps/web/operator/app.jsx','utf8');
  const source=readFileSync('apps/web/operator/world/OfficeWorld.jsx','utf8');
- assert.match(app,/href="#world"/);assert.match(app,/<OfficeWorld projectId=\{project\.id\} tasks=\{tasks\} events=\{eventHistory\}/);
+ const layouts=readFileSync('apps/web/operator/WindowExperiences.jsx','utf8');
+ assert.match(app,/href="#world"/);
+ assert.match(app,/<WindowExperience mode="full" project=\{project\} tasks=\{tasks\} events=\{eventHistory\}/);
+ assert.match(layouts,/<OfficeWorld projectId=\{project\.id\} tasks=\{tasks\} events=\{events\}/);
+ assert.match(layouts,/data-layout="compact"/);
+ assert.match(layouts,/data-layout="floating"/);
+ assert.match(layouts,/data-layout="taskbar"/);
  assert.match(source,/aria-label="Controles da câmera"/);
  assert.match(source,/aria-label="Centralizar a câmera na estação"/);
  assert.match(source,/aria-label="Escritório virtual 2D"/);

@@ -20,6 +20,7 @@ const MAX_PREFERENCE_BYTES: u64 = 64 * 1024;
 pub enum WindowMode {
     #[default]
     Full,
+    Compact,
     Floating,
     Taskbar,
 }
@@ -28,8 +29,9 @@ impl WindowMode {
     fn dimensions(self) -> (u32, u32) {
         match self {
             Self::Full => (1320, 860),
-            Self::Floating => (720, 570),
-            Self::Taskbar => (1000, 230),
+            Self::Compact => (980, 250),
+            Self::Floating => (660, 390),
+            Self::Taskbar => (1000, 135),
         }
     }
 }
@@ -71,7 +73,7 @@ fn prefs_path(app: &AppHandle) -> Result<PathBuf, String> {
         .path()
         .app_config_dir()
         .map_err(|_| "Cannot resolve preferences folder")?;
-    Ok(root.join("window-layout-v1.json"))
+    Ok(root.join("window-layout-v2.json"))
 }
 
 fn read_preferences(app: &AppHandle) -> Preferences {
@@ -130,7 +132,12 @@ fn clamp(placement: Placement, origin: (i32, i32), screen: (u32, u32)) -> Placem
     let (mx, my) = origin;
     let (sw, sh) = (screen.0.max(360), screen.1.max(300));
     let width = placement.width.clamp(360, sw);
-    let height = placement.height.clamp(140, sh);
+    let min_height = if placement.mode == WindowMode::Taskbar {
+        108
+    } else {
+        140
+    };
+    let height = placement.height.clamp(min_height, sh);
     let min_x = mx.saturating_sub(width as i32).saturating_add(MIN_VISIBLE);
     let max_x = mx.saturating_add(sw as i32).saturating_sub(MIN_VISIBLE);
     let min_y = my;
@@ -287,7 +294,7 @@ fn apply(app: &AppHandle, mode: WindowMode, top: Option<bool>) -> Result<Placeme
     );
     // Never disable resizability, mouse input or user-driven move.
     window
-        .set_min_size(Some(tauri::Size::Physical(PhysicalSize::new(360, 140))))
+        .set_min_size(Some(tauri::Size::Physical(PhysicalSize::new(360, 108))))
         .map_err(|_| "Cannot update minimum size")?;
     window
         .set_size(PhysicalSize::new(placement.width, placement.height))
@@ -372,10 +379,11 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
     });
     let show = MenuItem::with_id(app, "restore", "Abrir OmnyaDesk", true, None::<&str>)?;
     let full = MenuItem::with_id(app, "full", "Escritório completo", true, None::<&str>)?;
+    let compact = MenuItem::with_id(app, "compact", "Barra compacta", true, None::<&str>)?;
     let floating = MenuItem::with_id(app, "floating", "Janela flutuante", true, None::<&str>)?;
     let taskbar = MenuItem::with_id(app, "taskbar", "Faixa compacta", true, None::<&str>)?;
     let exit = MenuItem::with_id(app, "exit", "Sair do OmnyaDesk", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &full, &floating, &taskbar, &exit])?;
+    let menu = Menu::with_items(app, &[&show, &full, &compact, &floating, &taskbar, &exit])?;
     TrayIconBuilder::new()
         .icon(
             app.default_window_icon()
@@ -405,11 +413,26 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
                 "full" => {
                     let _ = apply(app, WindowMode::Full, None);
                 }
+                "compact" => {
+                    let _ = apply(app, WindowMode::Compact, None);
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                }
                 "floating" => {
                     let _ = apply(app, WindowMode::Floating, None);
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
                 }
                 "taskbar" => {
                     let _ = apply(app, WindowMode::Taskbar, None);
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
                 }
                 "exit" => app.exit(0),
                 _ => (),
@@ -484,8 +507,9 @@ mod tests {
     #[test]
     fn modes_restrict_size_and_always_on_top() {
         assert_eq!(WindowMode::Full.dimensions(), (1320, 860));
-        assert_eq!(WindowMode::Floating.dimensions(), (720, 570));
-        assert_eq!(WindowMode::Taskbar.dimensions(), (1000, 230));
+        assert_eq!(WindowMode::Compact.dimensions(), (980, 250));
+        assert_eq!(WindowMode::Floating.dimensions(), (660, 390));
+        assert_eq!(WindowMode::Taskbar.dimensions(), (1000, 135));
         assert!(serde_json::from_str::<WindowMode>("\"external\"").is_err());
     }
     #[test]

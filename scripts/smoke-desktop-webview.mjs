@@ -48,7 +48,7 @@ try{
    calls.push(command);
    if(command==='desktop_window_state')return prefs;
    if(command==='desktop_window_mode'){
-    if(!['full','floating','taskbar'].includes(args.mode))throw 'Unknown mode';
+    if(!['full','compact','floating','taskbar'].includes(args.mode))throw 'Unknown mode';
     prefs={...prefs,mode:args.mode};return prefs;
    }
    if(command==='desktop_always_on_top'){prefs={...prefs,alwaysOnTop:!!args.enabled};return prefs;}
@@ -95,9 +95,9 @@ try{
  // S25: modes, tray, native always-on-top command and compact responsive UI.
  await page.getByRole('button',{name:'Flutuante'}).click();
  await page.locator('html[data-office-mode="floating"]').waitFor();
- await page.getByRole('button',{name:'Faixa'}).click();
+ await page.getByRole('button',{name:'Taskbar'}).click();
  await page.locator('html[data-office-mode="taskbar"]').waitFor();
- assert.equal(await page.locator('.rail').evaluate(el=>getComputedStyle(el).display),'none');
+ assert.notEqual(await page.locator('.rail').evaluate(el=>getComputedStyle(el).display),'none','Enrollment must remain accessible before login');
  await page.getByRole('button',{name:'Sempre no topo'}).click();
  assert.equal(await page.evaluate(()=>window.__testDesktop.windowState().prefs.alwaysOnTop),true);
  await page.getByRole('button',{name:'Completo'}).click();
@@ -114,6 +114,34 @@ try{
  await page.getByRole('button',{name:'Escolher pasta do projeto'}).click();
  await page.getByRole('heading',{name:'Projeto A'}).waitFor();
  await page.getByRole('status').getByText('Sincronização ativa').waitFor({timeout:10000});
+ // S25-REWORK: inspect dedicated compositions, not CSS-clipped full dashboard.
+ await page.getByRole('button',{name:'Compacto'}).click();
+ await page.setViewportSize({width:980,height:250});
+ await page.locator('[data-layout="compact"]').waitFor();
+ assert.equal(await page.locator('.project-banner:visible').count(),0,'Compact must not embed full dashboard');
+ assert.equal(await page.locator('.px-room-agents .px-agent').count(),4);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+2),true,'Compact vertical overflow');
+ await page.screenshot({path:join(folder,'s25-rework-compact.png')});
+ await page.getByRole('button',{name:'Flutuante'}).click();
+ await page.setViewportSize({width:660,height:390});
+ await page.locator('[data-layout="floating"]').waitFor();
+ assert.equal(await page.locator('.px-floating-side>div').count(),3);
+ assert.equal(await page.locator('.content-grid:visible').count(),0,'Floating must not embed dashboard');
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+2),true,'Floating vertical overflow');
+ await page.screenshot({path:join(folder,'s25-rework-floating.png')});
+ await page.getByRole('button',{name:'Taskbar'}).click();
+ await page.setViewportSize({width:1000,height:135});
+ await page.locator('[data-layout="taskbar"]').waitFor();
+ assert.equal(await page.locator('.px-taskbar-people .px-agent').count(),4);
+ assert.equal(await page.locator('.world-surface:visible').count(),0,'Taskbar must not render zoomed world dashboard');
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+2),true,'Taskbar vertical overflow');
+ await page.screenshot({path:join(folder,'s25-rework-taskbar.png')});
+ await page.getByRole('button',{name:'Completo'}).click();
+ await page.setViewportSize({width:1360,height:900});
+ await page.locator('[data-layout="full"] .px-full-columns').waitFor();
+ await page.locator('[data-layout="full"] canvas').waitFor();
+ await page.screenshot({path:join(folder,'s25-rework-full.png')});
+ console.log('PASS: S25-REWORK 4 dedicated mode layouts, no clipped dashboard, canonical agent counters, no vertical overflow (14/14)');
  await page.getByText('Projeto A tarefa real').first().waitFor();
  assert.equal(await page.getByRole('region',{name:'Alertas de intervenção'}).count(),0);
  await page.getByRole('button',{name:'Adicionar pasta…'}).click();
