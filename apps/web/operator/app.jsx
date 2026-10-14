@@ -148,6 +148,9 @@ function App(){
   },controller.signal);
   return()=>controller.abort();
  },[token,project?.id,load,disconnect]);
+ const inspectTask=useCallback(id=>{setSelectedId(id);
+  requestAnimationFrame(()=>document.querySelector('.detail-surface')?.scrollIntoView({behavior:'smooth',block:'start'}));
+ },[]);
  const selected=tasks.find(task=>task.id===selectedId)||null;
  useEffect(()=>{
   if(!token||!project?.id||!selected?.id){setEvidences([]);return;}
@@ -193,7 +196,13 @@ function App(){
     </div></main>:<main className="main" aria-live="off">
     {error&&<div className="alert" role="alert">{error}<button aria-label="Fechar aviso" onClick={()=>setError('')}>×</button></div>}
     <div className="project-banner"><div className="project-mark"><Icon name="layers" size={22}/></div><div className="project-summary"><span className="eyebrow">PROJETO AUTORIZADO</span><h2>{project.name}</h2><span>ID {shortId(project.id)} · Acesso limitado ao projeto do token</span></div><div className="banner-right"> <span className="mini-label">DADOS DE ORIGEM</span><strong>PostgreSQL / API v1</strong><small>Última consulta: {fmtDate(lastRefresh)}</small></div></div>
-    <OfficeWorld projectId={project.id} tasks={tasks} events={eventHistory} historyComplete={historyComplete} connection={connection}/>
+    <OfficeWorld projectId={project.id} tasks={tasks} events={eventHistory} historyComplete={historyComplete} connection={connection} onInspectTask={inspectTask}/>
+    {tasks.some(task=>['awaiting_approval','blocked','failed','changes_requested'].includes(task.status))&&<section className="intervention-panel" aria-label="Alertas de intervenção" role="region">
+     <h2>Intervenção necessária</h2><p>Alertas baseados exclusivamente no estado persistido. Aprovações permanecem protegidas pelo fluxo S15.</p>
+     <ul>{tasks.filter(task=>['awaiting_approval','blocked','failed','changes_requested'].includes(task.status)).map(task=><li key={task.id}>
+      {badge(task.status)} <span>{task.title}</span><button type="button" onClick={()=>inspectTask(task.id)}>Ver eventos e evidências</button>
+     </li>)}</ul>
+    </section>}
     <section className="metrics" aria-label="Indicadores do projeto">
      <div className="metric"><div className="metric-head">Total de tarefas <Icon name="layers"/></div><strong>{tasks.length}</strong><small>Registradas neste projeto</small></div>
      <div className="metric"><div className="metric-head">Em execução <Icon name="activity"/></div><strong>{counts.active}</strong><small>Etapas ativas reportadas</small></div>
@@ -207,9 +216,9 @@ function App(){
        <label className="sr-only" htmlFor="status-filter">Filtrar por status</label><select id="status-filter" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">Todos os status</option><option value="active">Em execução</option><option value="review">Aguardando revisão</option><option value="approved">Aprovadas</option><option value="failed">Falharam</option><option value="blocked">Bloqueadas</option></select></div>
       <div className="task-table-wrap"><table><thead><tr><th>TAREFA</th><th>ESTADO</th><th>ATUALIZAÇÃO</th><th><span className="sr-only">Detalhes</span></th></tr></thead><tbody>
        {visible.map(task=><tr key={task.id} className={selectedId===task.id?'row-active':''}>
-        <td><button className="task-link" onClick={()=>setSelectedId(task.id)} aria-label={'Abrir detalhes de '+task.title}>{task.title}</button><span className="task-sub">#{shortId(task.id)} · versão {task.version}</span></td>
+        <td><button className="task-link" onClick={()=>inspectTask(task.id)} aria-label={'Abrir detalhes de '+task.title}>{task.title}</button><span className="task-sub">#{shortId(task.id)} · versão {task.version}</span></td>
         <td>{badge(task.status)}</td><td className="date-cell">{fmtDate(task.updatedAt)}</td>
-        <td><button className="row-open" onClick={()=>setSelectedId(task.id)} aria-label={'Visualizar '+task.title}><Icon name="arrow" size={16}/></button></td>
+        <td><button className="row-open" onClick={()=>inspectTask(task.id)} aria-label={'Visualizar '+task.title}><Icon name="arrow" size={16}/></button></td>
        </tr>)}</tbody></table>
        {!visible.length&&<div className="empty"><Icon name="layers" size={28}/><strong>Nenhuma tarefa encontrada</strong><span>Experimente alterar o filtro ou aguarde novas tarefas.</span></div>}</div>
       <div className="surface-footer">Até 500 tarefas por projeto · Ordenação persistida pela API · Sem dados simulados</div>

@@ -109,6 +109,17 @@ try{
  await page.keyboard.press('ArrowRight');
  await page.waitForTimeout(120);
  assert.deepEqual(errors,[],'No JavaScript errors in Phaser scene');
+ // S23: the Phaser avatar itself selects the authenticated, persisted task.
+ assert.equal(await page.getByRole('region',{name:'Alertas de intervenção'}).count(),0,'Active task is not an intervention');
+ await page.getByRole('button',{name:'Arquitetura',exact:true}).click();
+ await page.waitForTimeout(180);
+ await canvas.click({position:{x:540,y:293}});
+ await page.getByRole('heading',{name:'Detalhes da execução'}).waitFor();
+ await page.getByText('SHA-256 cccccccc…').waitFor();
+ await page.getByRole('button',{name:'Fechar detalhes'}).click();
+ await page.getByRole('button',{name:'Inspecionar tarefa e logs'}).click();
+ await page.getByText('task.created').waitFor();
+ await page.getByRole('button',{name:'Fechar detalhes'}).click();
  await page.screenshot({path:join(process.cwd(),'dist','apps','web','operator','s21-office-desktop.png'),fullPage:true});
  console.log('PASS: S21 Phaser canvas, 4 roles, camera station focus, keyboard, zoom and reset (10/10)');
  await page.getByRole('button',{name:'Abrir detalhes de Revisar execução de testes S20'}).click();
@@ -140,6 +151,17 @@ try{
  await page.getByRole('listitem').filter({hasText:'Revisor'}).getByText('Aguardando aprovação humana').waitFor();
  assert.equal(await page.locator('.world-role--working').count(),0,'Review wait must not animate work');
  console.log('PASS: S22 real SSE outage freezes sprites, event replay and canonical resync, human review remains paused (10/10)');
+ // S23: intervention alerts are derived only from persisted canonical status.
+ const intervention=page.getByRole('region',{name:'Alertas de intervenção'});
+ await intervention.getByText('Intervenção necessária').waitFor();
+ await intervention.getByText('Revisar execução de testes S20').waitFor();
+ await intervention.getByText('Aguardando aprovação').waitFor();
+ await intervention.getByRole('button',{name:'Ver eventos e evidências'}).click();
+ await page.getByText('SHA-256 cccccccc…').waitFor();
+ assert.equal(await page.getByRole('button',{name:'Aprovar'}).count(),0,
+  'Human approval remains S15-protected, never a blind action');
+ await page.screenshot({path:join(process.cwd(),'dist','apps','web','operator','s23-intervention.png'),fullPage:true});
+ console.log('PASS: S23 Phaser avatar selection, accessible station inspection, immutable log/evidence links, canonical intervention and approval lock (8/8)');
  await page.getByText('Aguardando revisão',{exact:true}).first().waitFor();
  const secrets=await page.evaluate(()=>({
   ls:Object.keys(localStorage),ss:Object.keys(sessionStorage),

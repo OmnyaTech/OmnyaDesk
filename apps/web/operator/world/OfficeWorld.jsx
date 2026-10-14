@@ -64,7 +64,7 @@ function drawStation(scene,role){
 }
 
 export class OfficeScene extends Phaser.Scene{
- constructor(onReady){super({key:'OmnyaOffice'});this.onReady=onReady;this.keys=null;this.stationSprites=new Map();this.currentProjection=null;}
+ constructor(onReady,onInspect){super({key:'OmnyaOffice'});this.onReady=onReady;this.onInspect=onInspect;this.keys=null;this.stationSprites=new Map();this.currentProjection=null;}
  create(){
   // Project-owned procedural tileset. No remote assets or unlicensed art.
   const tileKey='s21-floor-tiles';
@@ -97,7 +97,13 @@ export class OfficeScene extends Phaser.Scene{
    g.fillStyle(0x315977,.9).fillRect(x,27,120,18);
    g.fillStyle(0x6ca5bf).fillRect(x+9,29,102,9);
   }
-  for(const role of ROLES)this.stationSprites.set(role.id,drawStation(this,role));
+  for(const role of ROLES){
+   const entry=drawStation(this,role);
+   entry.avatar.setInteractive({useHandCursor:true}).on('pointerup',()=>{
+    if(this.currentProjection?.connected)this.onInspect?.(role.id);
+   });
+   this.stationSprites.set(role.id,entry);
+  }
   this.cameras.main.setBounds(0,0,OFFICE_WIDTH,OFFICE_HEIGHT);
   this.cameras.main.centerOn(OFFICE_WIDTH/2,OFFICE_HEIGHT/2);
   this.cameras.main.setRoundPixels(true);
@@ -158,14 +164,18 @@ export class OfficeScene extends Phaser.Scene{
  reset(){this.cameras.main.setZoom(1);this.cameras.main.centerOn(800,490);}
 }
 
-export function OfficeWorld({projectId,tasks=[],events=[],historyComplete=true,connection='offline'}){
- const host=useRef(null),scene=useRef(null),game=useRef(null);
+export function OfficeWorld({projectId,tasks=[],events=[],historyComplete=true,connection='offline',onInspectTask}){
+ const host=useRef(null),scene=useRef(null),game=useRef(null),inspectRef=useRef(onInspectTask);
+ inspectRef.current=onInspectTask;
  const [ready,setReady]=useState(false),[zoom,setZoom]=useState(1);
  const projection=projectOffice({projectId,tasks,events,historyComplete,connection});
  useEffect(()=>{
   if(!host.current)return;
   let alive=true;
-  const office=new OfficeScene(active=>{if(!alive)return;scene.current=active;setReady(true);});
+  const office=new OfficeScene(active=>{if(!alive)return;scene.current=active;setReady(true);},roleId=>{
+   const role=scene.current?.currentProjection?.roles.find(item=>item.id===roleId);
+   if(role?.taskId)inspectRef.current?.(role.taskId);
+  });
   const instance=new Phaser.Game({type:Phaser.CANVAS,
    parent:host.current,width:940,height:450,transparent:false,
    backgroundColor:'#14273a',
@@ -207,6 +217,7 @@ export function OfficeWorld({projectId,tasks=[],events=[],historyComplete=true,c
   <div className="world-roles" aria-label="Estado persistido por estação" role="list">
    {projection.roles.map(role=><div key={role.id} role="listitem" className={'world-role world-role--'+role.phase}>
     <strong>{role.name}</strong>
+    {role.taskId&&<button type="button" className="world-inspect" onClick={()=>onInspectTask?.(role.taskId)}>Inspecionar tarefa e logs</button>}
     <span>{role.phase==='working'?'Em execução — '+role.total+' tarefa(s)':role.phase==='waiting'?'Aguardando aprovação humana':role.phase==='paused'?'Sem atualização em tempo real':'Sem atividade registrada'}</span>
    </div>)}
   </div>

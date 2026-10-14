@@ -9,3 +9,5 @@
 .world-controls button[aria-label]{min-width:34px;font-size:15px}
 .world-note{margin:8px 18px 17px;font-size:11px;color:#8da7c4;line-height:1.5}
 @media(max-width:720px){.world-heading{align-items:flex-start;flex-direction:column}.world-view{height:320px;min-height:0;margin:0 11px}.world-toolbar{padding:13px 11px}.world-note{margin:8px 11px 15px}}
+
+.world-roles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 18px}.world-role{min-width:0;padding:12px;background:#142d40;border:1px solid #35516c;border-radius:9px;display:flex;flex-direction:column;gap:7px}.world-role strong{font-size:12px}.world-role span{font-size:11px;color:#a8c3da}.world-inspect{font-size:11px;text-align:left;align-self:flex-start}.world-inspect:focus-visible{outline:2px solid #8ecaff;outline-offset:3px}@media(max-width:850px){.world-roles{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:450px){.world-roles{grid-template-columns:1fr}}
