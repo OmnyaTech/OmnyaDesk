@@ -3,7 +3,7 @@ import type {Pool} from 'pg';
 import {z} from 'zod';
 import {UuidSchema} from '../../contracts/src/domain.ts';
 
-export const ApiScopeSchema=z.enum(['projects:read','tasks:read','tasks:create','tasks:transition','events:read','git:propose','git:review','git:integrate']);
+export const ApiScopeSchema=z.enum(['projects:read','tasks:read','tasks:create','tasks:transition','events:read','files:write','git:propose','git:review','git:integrate']);
 export type ApiScope=z.infer<typeof ApiScopeSchema>;
 export const ClientOriginSchema=z.enum(['chatgpt','desktop_commander','codex','vscode','web','cli','other']);
 export const IntakeChannelSchema=z.enum(['api','mcp']);

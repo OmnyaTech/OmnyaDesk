@@ -2,6 +2,7 @@ import {useCallback,useEffect,useMemo,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './styles.css';
 import {WindowExperience} from './WindowExperiences.jsx';
+import {AttachmentPanel} from './AttachmentPanel.jsx';
 import {REPLAY_MAX_EVENTS} from './world/projector.mjs';
 const STATUSES={
  created:['Criada','neutral'],queued:['Na fila','neutral'],planning:['Planejamento','active'],
@@ -320,6 +321,7 @@ function App(){
        {selectedEvents.length?<ol className="timeline">{selectedEvents.map(e=><li key={e.eventId||e.sequence}><span className="timeline-icon"/><div><strong>{String(e.type||'Evento')}</strong><small>{fmtDate(e.occurredAt)} · {e.actor?.kind||'system'}</small></div></li>)}</ol>:<p className="empty-inline">Nenhum evento recente retornado pela API.</p>}</div>
       <div className="subsection" id="evidence"><h4><Icon name="shield" size={17}/> Evidências verificadas <span className="count">{evidences.length}</span></h4>
        {evidences.length?<ul className="evidence-list">{evidences.map(e=><li key={e.id}><span className="evidence-icon"><Icon name="file" size={16}/></span><div><strong>{e.kind} · v{e.version}</strong><small>{fmtDate(e.createdAt)}</small><code title={e.chainSha256}>SHA-256 {shortId(e.chainSha256)}</code></div></li>)}</ul>:<p className="empty-inline">Nenhuma evidência vinculada a esta tarefa. O painel nunca exibe conteúdo bruto do ledger.</p>}</div>
+      <AttachmentPanel key={project.id+':'+selected.id} projectId={project.id} taskId={selected.id} token={token} desktopMode={desktopMode} desktopInvoke={desktopInvoke} request={request}/>
       </>:<div className="detail-placeholder"><div className="detail-illustration"><Icon name="file" size={32}/></div><h3>Selecione uma tarefa</h3><p>Clique em uma linha para inspecionar o estado persistido, os eventos e os resumos criptográficos do ledger.</p></div>}
      </section>
     </div>

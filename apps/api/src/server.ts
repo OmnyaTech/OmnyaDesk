@@ -15,6 +15,7 @@ import {GitIntegrationQueue,IntegrationConflict,IntegrationForbidden,Integration
 import {GitValidationError} from '../../../packages/db/src/git-driver.ts';
 import {EvidenceIntegrityError,EvidenceLedger} from '../../../packages/db/src/evidence-ledger.ts';
 import {WorkstationRegistry} from '../../../packages/db/src/workstation.ts';
+import {PrivateAttachments,AttachmentInvalid,AttachmentLimit,AttachmentNotFound} from '../../../packages/db/src/attachments.ts';
 
 const uuid={type:'string',format:'uuid'} as const;
 const projectParams={type:'object',required:['projectId'],additionalProperties:false,
@@ -36,7 +37,7 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
  const repo=new PostgresOfficeRepository(pool),flows=new TaskOrchestrator(pool),tokens=new TokenStore(pool);
  const hub=new ProjectSseHub(flows,tokens),intake=new TaskIntakeService(pool),scheduler=new ResourceScheduler(pool);
  const integrations=new GitIntegrationQueue(pool),evidence=new EvidenceLedger(pool);
- const workstations=new WorkstationRegistry(pool);
+ const workstations=new WorkstationRegistry(pool),attachments=new PrivateAttachments(pool);
  await api.register(swagger,{openapi:{
   info:{title:'OmnyaDesk Local API',version:'1.0.0-s11',description:'Local PostgreSQL API; no public exposure before security/release gates.'},
   components:{securitySchemes:{bearerToken:{type:'http',scheme:'bearer',bearerFormat:'opaque'}}},
@@ -59,8 +60,11 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
  };
  api.setErrorHandler((error,req,res)=>{
   const status=(error as {statusCode?:number}).statusCode;
-  if(status===401||status===403||status===404||status===503)
-   return res.code(status).send({error:status===404?'Not found':status===401?'Authentication required':status===503?'Too many active streams':'Insufficient scope'});
+  if(status===401||status===403||status===404||status===503||status===413)
+   return res.code(status).send({error:status===404?'Not found':status===401?'Authentication required':status===503?'Too many active streams':status===413?'Attachment too large':'Insufficient scope'});
+  if(error instanceof AttachmentInvalid)return res.code(400).send({error:error.message});
+  if(error instanceof AttachmentLimit)return res.code(413).send({error:error.message});
+  if(error instanceof AttachmentNotFound)return res.code(404).send({error:'Not found'});
   if(error instanceof ZodError||status===400||error instanceof SyntaxError)return res.code(400).send({error:'Invalid request'});
   if(error instanceof IntegrationConflict||error instanceof IntegrationForbidden||error instanceof IntegrationNotFound)
    return res.code(error.status).send({error:error.status===404?'Not found':error.status===403?'Insufficient scope':error.message});
@@ -88,7 +92,7 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
    return reply.header('content-type',contentType).header('cache-control','no-store')
     .header('x-content-type-options','nosniff').header('referrer-policy','no-referrer')
     .header('x-frame-options','DENY')
-    .header('content-security-policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+    .header('content-security-policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
     .send(bytes);
   });
  }
@@ -156,6 +160,61 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
    [req.params.projectId,req.params.taskId]);
   if(!found.rowCount)throw httpError(404,'Not found');
   return {evidence:await evidence.listSummaries(req.params.projectId,req.params.taskId)};
+ });
+ // S27. Binary never enters the public /operator path, evidence ledger or filesystem.
+ const attachParams={type:'object',required:['projectId','taskId','attachmentId'],
+  additionalProperties:false,properties:{projectId:uuid,taskId:uuid,attachmentId:uuid}} as const;
+ const attachmentBody={type:'object',required:['filename','mimeType','dataBase64'],
+  additionalProperties:false,properties:{
+   filename:{type:'string',minLength:1,maxLength:120},
+   mimeType:{type:'string',maxLength:60},
+   dataBase64:{type:'string',minLength:4,maxLength:1398104}
+  }} as const;
+ type AttachmentBody={filename:string;mimeType:string;dataBase64:string};
+ const taskExists=async(projectId:string,taskId:string)=>{
+  const row=await pool.query('SELECT 1 FROM tasks WHERE project_id=$1 AND id=$2',[projectId,taskId]);
+  if(!row.rowCount)throw httpError(404,'Not found');
+ };
+ api.get<{Params:{projectId:string;taskId:string}}>('/v1/projects/:projectId/tasks/:taskId/attachments',{
+  schema:{...secured('tasks:read'),params:taskParams,tags:['attachments'],
+   description:'Project/task-scoped private attachment metadata, no raw bytes.'}
+ },async(req,reply)=>{
+  guard(req,'tasks:read',req.params.projectId);
+  return reply.header('cache-control','private,no-store')
+   .send({attachments:await attachments.list(req.params.projectId,req.params.taskId)});
+ });
+ api.get<{Params:{projectId:string;taskId:string;attachmentId:string}}>(
+ '/v1/projects/:projectId/tasks/:taskId/attachments/:attachmentId',{
+  schema:{...secured('tasks:read'),params:attachParams,tags:['attachments'],
+   description:'Scoped base64 download for a verified blob; must not be rendered as HTML or executed.'}
+ },async(req,reply)=>{
+  guard(req,'tasks:read',req.params.projectId);
+  return reply.header('cache-control','private,no-store').header('x-content-type-options','nosniff')
+   .send(await attachments.get(req.params.projectId,req.params.taskId,req.params.attachmentId));
+ });
+ api.post<{Params:{projectId:string;taskId:string};Body:AttachmentBody}>(
+ '/v1/projects/:projectId/tasks/:taskId/attachments',{
+  bodyLimit:1450000,
+  schema:{...secured('files:write'),params:taskParams,body:attachmentBody,tags:['attachments'],
+   description:'Explicit files:write scope; 1 MiB magic-sniffed immutable project/task file, no execution.'}
+ },async(req,reply)=>{
+  const principal=guard(req,'files:write',req.params.projectId);
+  const attachment=await attachments.upload(req.params.projectId,req.params.taskId,principal.subjectId,req.body);
+  return reply.header('cache-control','private,no-store').code(201).send({attachment});
+ });
+ // Desktop upload is isolated from browser-origin and read-only Bearer tokens.
+ // It authenticates the OS-enrolled workstation and verifies its exact project ACL.
+ api.post<{Params:{projectId:string;taskId:string};Body:AttachmentBody}>(
+ '/v1/workstation/projects/:projectId/tasks/:taskId/attachments',{
+  bodyLimit:1450000,
+  schema:{hide:true,params:taskParams,body:attachmentBody}
+ },async(req,reply)=>{
+  const actor=await workstationGuard(req);
+  const projects=await workstations.projects(actor.id);
+  if(!projects.some(project=>project.id===req.params.projectId))throw httpError(404,'Not found');
+  await taskExists(req.params.projectId,req.params.taskId);
+  const attachment=await attachments.upload(req.params.projectId,req.params.taskId,actor.subjectId,req.body);
+  return reply.header('cache-control','private,no-store').code(201).send({attachment});
  });
  const intakeSchema={...secured('tasks:create'),params:projectParams,tags:['intake'],
   description:'Single authenticated task ingress. Supply Idempotency-Key UUID; origin and actor come from the token.',

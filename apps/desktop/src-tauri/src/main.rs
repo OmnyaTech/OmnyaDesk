@@ -172,6 +172,9 @@ fn approved_path(path: &str, project_id: &str) -> bool {
     if rest == "tasks" {
         return true;
     }
+    let parts: Vec<_> = rest.split('/').collect();
+    if parts.len() == 3 && parts[0] == "tasks" && parts[2] == "attachments" && uuid::Uuid::parse_str(parts[1]).is_ok(){return true;}
+    if parts.len() == 4 && parts[0] == "tasks" && parts[2] == "attachments" && uuid::Uuid::parse_str(parts[1]).is_ok() && uuid::Uuid::parse_str(parts[3]).is_ok(){return true;}
     if let Some(cursor) = rest.strip_prefix("events?after=") {
         return !cursor.is_empty()
             && cursor.len() <= 16
@@ -232,6 +235,33 @@ async fn scoped_get(path: &str, session: &Session) -> Result<Value, String> {
 async fn desktop_read(path: String, session: State<'_, Session>) -> Result<Value, String> {
     scoped_get(&path, &session).await
 }
+// Explicit native-only upload capability. It NEVER uses the read-only project Bearer.
+#[tauri::command]
+async fn desktop_upload(
+ project_id:String,task_id:String,filename:String,mime_type:String,data_base64:String,
+ session: State<'_, Session>
+) -> Result<Value,String>{
+ if uuid::Uuid::parse_str(&project_id).is_err()||uuid::Uuid::parse_str(&task_id).is_err(){
+  return Err("Invalid project or task UUID".into());
+ }
+ let active=session.0.lock().map_err(|_|"Session unavailable")?.clone()
+  .ok_or("Select an authorized project")?;
+ if active.project_id!=project_id {return Err("Project outside selected session".into());}
+ if filename.is_empty()||filename.len()>120||filename.contains('/')||filename.contains('\\')||
+    filename.chars().any(|c|c.is_control())||data_base64.len()>1_398_104{
+  return Err("Invalid attachment name or size".into());
+ }
+ if !["image/png","image/jpeg","application/pdf","text/plain","text/x-diff"].contains(&mime_type.as_str()){
+  return Err("Attachment type not permitted".into());
+ }
+ let path=format!("/v1/workstation/projects/{project_id}/tasks/{task_id}/attachments");
+ let response=client()?.post(format!("{API}{path}"))
+  .bearer_auth(secret()?)
+  .json(&json!({"filename":filename,"mimeType":mime_type,"dataBase64":data_base64}))
+  .send().await.map_err(|_|"Local API unavailable".to_string())?;
+ if response.status()!=StatusCode::CREATED{return Err(format!("Attachment rejected ({})",response.status()));}
+ response.json().await.map_err(|_|"Invalid attachment response".into())
+}
 #[tauri::command]
 async fn desktop_poll(after: u64, session: State<'_, Session>) -> Result<Value, String> {
     if after > 9_007_199_254_740_991 {
@@ -267,6 +297,7 @@ fn main() {
             desktop_register,
             desktop_select,
             desktop_read,
+            desktop_upload,
             desktop_poll,
             desktop_logout,
             window_modes::desktop_window_state,
@@ -285,6 +316,11 @@ mod tests {
         let id = "11111111-1111-4111-8111-111111111111";
         assert!(approved_path("/v1/projects", id));
         assert!(approved_path(&format!("/v1/projects/{id}/tasks"), id));
+        let task="22222222-2222-4222-8222-222222222222";
+        let file="33333333-3333-4333-8333-333333333333";
+        assert!(approved_path(&format!("/v1/projects/{id}/tasks/{task}/attachments"),id));
+        assert!(approved_path(&format!("/v1/projects/{id}/tasks/{task}/attachments/{file}"),id));
+        assert!(!approved_path(&format!("/v1/projects/{id}/tasks/{task}/attachments/../../etc"),id));
         assert!(approved_path(
             &format!("/v1/projects/{id}/events?after=16"),
             id

@@ -1,0 +1,18 @@
+.attachment-panel{padding:18px 24px;border-top:1px solid #2d4460;color:#d0e2f5;display:flex;flex-direction:column;gap:10px;min-width:0}
+.attachment-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px}
+.attachment-head strong{font-size:13px}.attachment-head small,.attachment-panel>small,.attachment-label{font-size:10px;color:#98b3d3}
+.attachment-label{font-weight:700}.attachment-panel input[type=file]{max-width:100%;color:#b3cee6;font-size:11px;border:1px dashed #4c7598;border-radius:8px;padding:10px}
+.attachment-action{display:inline-block;align-self:flex-start;border:1px solid #4e95b1;background:#1d5871;color:#e9faff;border-radius:7px;padding:9px 12px;font-size:11px;font-weight:700;text-decoration:none}
+.attachment-action:disabled{opacity:.45}.attachment-error{color:#ffacb7;font-size:11px;overflow-wrap:anywhere}
+.attachment-list{padding:0;margin:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.attachment-list li{border:1px solid #2d4765;border-radius:7px;padding:9px;overflow:hidden}
+.attachment-list button{display:block;max-width:100%;overflow-wrap:anywhere;background:transparent;color:#9ee3fe;border:0;padding:3px 0;font-size:12px;text-align:left}
+.attachment-list small{display:block;margin-top:3px;color:#83a7c4;font-size:10px;overflow-wrap:anywhere}
+.attachment-preview{display:flex;flex-direction:column;gap:9px;border:1px solid #3a6180;border-radius:9px;padding:12px;overflow:hidden;background:#102a3a}
+.attachment-preview header{display:flex;justify-content:space-between;gap:10px;overflow-wrap:anywhere;font-size:12px}
+.attachment-preview header button{background:#264963;border:1px solid #4e7499;color:#dcefff;border-radius:5px;padding:5px}
+.attachment-preview img{object-fit:contain;image-rendering:auto;max-height:300px;max-width:100%}
+.attachment-preview pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font:11px/1.5 ui-monospace,Consolas,monospace;background:#071a26;border:1px solid #28445e;padding:8px}
+.attachment-diff span{display:block;white-space:pre-wrap}.diff-plus{color:#82e5b1;background:#17382d}.diff-minus{color:#ff9ca7;background:#3e252d}.diff-hunk{color:#a6bffe;background:#243655}
+.attachment-preview>small{font-size:10px;color:#87a6bf;overflow-wrap:anywhere}
+@media(max-width:720px){.attachment-panel{padding:13px}}

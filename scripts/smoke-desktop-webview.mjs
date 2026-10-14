@@ -37,6 +37,7 @@ try{
    title:i===0?'Projeto A tarefa real':'Projeto B revisão humana',status:i===0?phase:'awaiting_approval',
    version:2,currentRunId:null,updatedAt:now,createdAt:now});
   let calls=[];
+  const stored=[];
   window.__testDesktop={
    setOffline:v=>{offline=v;},calls:()=>calls.slice(),
    windowState:()=>({prefs,minimized}),
@@ -76,12 +77,25 @@ try{
     if(i<0)throw Error('No authorized project');
     return {events:histories[i].filter(e=>e.sequence>args.after)};
    }
+   if(command==='desktop_upload'){
+    if(!enrolled||args.projectId!==active||!taskIds.includes(args.taskId))throw Error('S27 native project ACL denied');
+    const id='cccccccc-cccc-4ccc-8ccc-'+String(stored.length+1).padStart(12,'0');
+    const attachment={id,taskId:args.taskId,filename:args.filename,mimeType:args.mimeType,
+      sizeBytes:atob(args.dataBase64).length,sha256:'a'.repeat(64),createdAt:now};
+    stored.push({attachment,dataBase64:args.dataBase64,projectId:active});
+    return {attachment};
+   }
    if(command==='desktop_read'){
     const i=projects.findIndex(p=>p.id===active),prefix='/v1/projects/'+active;
     if(i<0||!args.path.startsWith(prefix))throw Error('Native scope denied');
     if(args.path.endsWith('/tasks'))return {tasks:[task(i)]};
     if(args.path.includes('/events?after='))return {events:histories[i].filter(e=>e.sequence>Number(args.path.split('after=')[1]))};
     if(args.path.endsWith('/evidence'))return {evidence:[]};
+    if(args.path.endsWith('/attachments'))return {attachments:stored.filter(s=>s.projectId===active&&s.attachment.taskId===taskIds[i]).map(s=>s.attachment)};
+    if(args.path.includes('/attachments/')){
+     const id=args.path.split('/attachments/')[1];const match=stored.find(s=>s.projectId===active&&s.attachment.taskId===taskIds[i]&&s.attachment.id===id);
+     if(!match)throw Error('Not found');return {attachment:match.attachment,dataBase64:match.dataBase64};
+    }
     throw Error('Native path denied');
    }
    throw Error('Unrecognized command: '+command);
@@ -150,6 +164,35 @@ try{
  await page.getByRole('region',{name:'Alertas de intervenção'}).getByText('Projeto B revisão humana').waitFor();
  await page.getByRole('button',{name:'Ver eventos e evidências'}).click();
  await page.getByText('task.created').waitFor();
+ // S27: native project-scoped attachment and escaped diff preview.
+ await page.locator('#attachment-file-input').setInputFiles({
+  name:'changes.diff',mimeType:'text/x-diff',
+  buffer:Buffer.from('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+safe\n')
+ });
+ await page.getByRole('button',{name:'Enviar arquivo validado'}).click();
+ await page.getByRole('button',{name:'Pré-visualizar changes.diff'}).waitFor();
+ await page.getByRole('button',{name:'Pré-visualizar changes.diff'}).click();
+ await page.getByLabel('Diff textual seguro').getByText('+safe').waitFor();
+ assert.equal(await page.locator('.attachment-preview iframe').count(),0);
+ assert.ok((await page.evaluate(()=>window.__testDesktop.calls())).includes('desktop_upload'));
+ await page.screenshot({path:join(folder,'s27-native-diff-preview.png')});
+ await page.locator('#attachment-file-input').setInputFiles({
+  name:'sample.png',mimeType:'image/png',
+  buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlBLeUAAAAASUVORK5CYII=','base64')
+ });
+ await page.getByRole('button',{name:'Enviar arquivo validado'}).click();
+ await page.getByRole('button',{name:'Pré-visualizar sample.png'}).click();
+ await page.getByRole('img',{name:'Imagem sample.png'}).waitFor();
+ assert.ok((await page.getByRole('img',{name:'Imagem sample.png'}).getAttribute('src')).startsWith('data:image/png;base64,'));
+ await page.locator('#attachment-file-input').setInputFiles({
+  name:'document.pdf',mimeType:'application/pdf',
+  buffer:Buffer.from('%PDF-1.4\n% passive test\n%%EOF','utf8')
+ });
+ await page.getByRole('button',{name:'Enviar arquivo validado'}).click();
+ await page.getByRole('button',{name:'Pré-visualizar document.pdf'}).click();
+ await page.getByText('PDF não é renderizado dentro do aplicativo por segurança.').waitFor();
+ assert.equal(await page.locator('.attachment-preview iframe,.attachment-preview embed,.attachment-preview object').count(),0);
+ console.log('PASS: S27 native upload, project-scoped metadata, diff/image preview, PDF no-inline and save link (11/11)');
  await page.getByLabel('Projeto local').selectOption(projects[0].id);
  await page.getByRole('heading',{name:'Projeto A'}).waitFor();
  await page.evaluate(()=>window.__testDesktop.setOffline(true));

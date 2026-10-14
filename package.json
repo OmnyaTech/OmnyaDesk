@@ -33,6 +33,7 @@
     "vscode:check-host": "node scripts/smoke-vscode.mjs --host-only",
     "desktop:build": "node scripts/build-desktop.mjs && node scripts/package-desktop.mjs",
     "desktop:smoke": "node scripts/build-desktop.mjs && node scripts/smoke-desktop-webview.mjs",
+    "s27:browser": "node scripts/build-desktop.mjs && node scripts/smoke-desktop-webview.mjs",
     "smoke:build": "node scripts/smoke-built.mjs",
     "smoke:worker": "node scripts/smoke-worker.mjs",
     "smoke:auth": "node scripts/smoke-auth.mjs",
