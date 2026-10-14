@@ -38,6 +38,7 @@ function visit(dir){
   if(!st.isFile())continue;
   if(st.size>4*1024*1024){issues.push(rp+': file larger than 4MiB');continue;}
   const bytesFile=readFileSync(full);
+  if(rp==='apps/desktop/src-tauri/icons/icon.ico' && st.size<100000 && bytesFile[0]===0 && bytesFile[1]===0 && bytesFile[2]===1 && bytesFile[3]===0){files++;bytes+=st.size;continue;}
   if(bytesFile.includes(0)){issues.push(rp+': binary file not allowlisted');continue;}
   let content;
   try{content=new TextDecoder('utf-8',{fatal:true}).decode(bytesFile);}

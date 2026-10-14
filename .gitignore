@@ -44,3 +44,6 @@ pgdata/
 # Personal editor config
 .vscode/settings.json
 .idea/
+**/target/
+**/.cargo-cache/
+apps/desktop/src-tauri/gen/schemas/

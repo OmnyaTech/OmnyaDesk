@@ -1,0 +1,10 @@
+import {execFileSync} from 'node:child_process';
+import {mkdir,readFile,writeFile,copyFile} from 'node:fs/promises';
+execFileSync(process.execPath,['apps/web/build.mjs'],{stdio:'inherit'});
+const out='dist/apps/desktop';
+await mkdir(out,{recursive:true});
+let html=await readFile('apps/web/operator/index.html','utf8');
+html=html.replaceAll('/operator/app.js','./app.js').replaceAll('/operator/app.css','./app.css');
+await writeFile(out+'/index.html',html);
+for(const file of ['app.js','app.css'])await copyFile('dist/apps/web/operator/'+file,out+'/'+file);
+console.log('PASS: desktop assets share exact React/Phaser operator bundle');

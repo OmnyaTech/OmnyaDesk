@@ -16,8 +16,11 @@ const fmtDate=value=>{if(!value)return '—';const date=new Date(value);
 const shortId=id=>id?String(id).slice(0,8)+'…':'—';
 const badge=(status)=>{const [label,kind]=STATUSES[status]??[String(status||'Desconhecido'),'neutral'];
  return <span className={'status status--'+kind}>{label}</span>;};
+const desktopMode=typeof window!=='undefined'&&Boolean(window.__TAURI__?.core?.invoke);
+const desktopInvoke=(command,args={})=>window.__TAURI__.core.invoke(command,args);
 const route=(projectId,path='')=>'/v1/projects/'+encodeURIComponent(projectId)+path;
 async function request(token,path,signal){
+ if(desktopMode)return desktopInvoke('desktop_read',{path});
  const response=await fetch(path,{headers:{Authorization:'Bearer '+token,Accept:'application/json'},
   credentials:'omit',cache:'no-store',signal});
  if(!response.ok){
@@ -80,6 +83,7 @@ function Icon({name,size=18}){const shapes={
  };return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{shapes[name]}</svg>;}
 function App(){
  const [credential,setCredential]=useState('');
+ const [desktopProjects,setDesktopProjects]=useState([]);
  const [token,setToken]=useState(null),[project,setProject]=useState(null);
  const [tasks,setTasks]=useState([]),[events,setEvents]=useState([]);
  const [eventHistory,setEventHistory]=useState([]),[historyComplete,setHistoryComplete]=useState(true);
@@ -87,7 +91,8 @@ function App(){
  const [filter,setFilter]=useState('all'),[search,setSearch]=useState('');
  const [busy,setBusy]=useState(false),[error,setError]=useState('');
  const [connection,setConnection]=useState('offline'),[lastRefresh,setLastRefresh]=useState(null);
- const disconnect=useCallback(()=>{setToken(null);setCredential('');setProject(null);
+ const disconnect=useCallback(()=>{if(desktopMode)void desktopInvoke('desktop_logout').catch(()=>{});
+  setDesktopProjects([]);setToken(null);setCredential('');setProject(null);
   setTasks([]);setEvents([]);setEventHistory([]);setHistoryComplete(true);setSelectedId(null);setEvidences([]);setConnection('offline');
   setError('');},[]);
  const load=useCallback(async(secret,scopeId,signal)=>{
@@ -109,9 +114,39 @@ function App(){
   setEvents(history.slice(-500).reverse());
   setLastRefresh(new Date().toISOString());
  },[]);
+ const activateDesktop=async(projects,id)=>{
+  const active=projects.find(p=>p.id===id)||projects[0];
+  if(!active){setProject(null);setToken('desktop');return;}
+  await desktopInvoke('desktop_select',{projectId:active.id});
+  await load('desktop',active.id);
+  setProject(active);setToken('desktop');
+ };
+ useEffect(()=>{if(!desktopMode)return;let disposed=false;
+  desktopInvoke('desktop_restore').then(async result=>{
+   if(disposed)return;
+   const projects=Array.isArray(result.projects)?result.projects:[];
+   setDesktopProjects(projects);await activateDesktop(projects);
+  }).catch(()=>{});
+  return()=>{disposed=true;};
+ },[]);
+ const registerFolder=async()=>{setBusy(true);setError('');
+  try{await desktopInvoke('desktop_register');const response=await desktopInvoke('desktop_restore');
+   const projects=Array.isArray(response.projects)?response.projects:[];
+   setDesktopProjects(projects);await activateDesktop(projects,projects.at(-1)?.id);
+  }catch(e){setError(String(e));}finally{setBusy(false);}
+ };
+ const switchDesktop=async id=>{setBusy(true);setError('');
+  try{await activateDesktop(desktopProjects,id);}catch(e){setError(String(e));}finally{setBusy(false);}
+ };
  const submit=async(ev)=>{
   ev.preventDefault();setBusy(true);setError('');
   try{
+   if(desktopMode){
+    if(!/^ods_[a-f0-9]{64}$/.test(credential.trim()))throw new Error('Informe a chave de inscrição da estação.');
+    const response=await desktopInvoke('desktop_login',{value:credential.trim()});
+    const projects=Array.isArray(response.projects)?response.projects:[];
+    setDesktopProjects(projects);await activateDesktop(projects);setCredential('');return;
+   }
    if(!/^odt_[a-f0-9]{64}$/.test(credential.trim()))throw new Error('Informe uma credencial Bearer válida.');
    const value=credential.trim();const response=await request(value,'/v1/projects');
    const active=response.projects?.[0];
@@ -123,6 +158,20 @@ function App(){
  };
  useEffect(()=>{
   if(!token||!project?.id)return;
+  if(desktopMode){
+   let stopped=false,working=false,after=0,online=false;
+   const poll=async()=>{if(stopped||working)return;working=true;
+    try{const result=await desktopInvoke('desktop_poll',{after});
+     if(stopped)return;
+     const batch=Array.isArray(result.events)?result.events:[];
+     if(batch.length){after=Math.max(after,...batch.map(e=>e.sequence||0));await load('desktop',project.id);}
+     if(!stopped){if(!online){online=true;await load('desktop',project.id);}setConnection('online');}
+    }catch{if(!stopped){online=false;setConnection('offline');}}
+    finally{working=false;}
+   };
+   void poll();const timer=setInterval(()=>{void poll();},1800);
+   return()=>{stopped=true;clearInterval(timer);};
+  }
   const controller=new AbortController(),id=project.id;
   let refreshing=false,pending=false,streamOpen=false;
   const resync=()=>{
@@ -185,17 +234,23 @@ function App(){
   </aside>
   <div className="workspace">
    <header className="topbar"><div><span className="eyebrow">OMNYATECH / OPERAÇÕES</span><h1 id="overview">Painel operacional <span className="h1-star">✦</span></h1><p>Visibilidade real de projetos, execuções e evidências auditáveis.</p></div>
-    <div className="top-actions"><span className={'connection '+(connection==='online'?'connected':'')} role="status"><span className="dot"/>{!token?'Desconectado':connection==='online'?'Tempo real ativo':'Aguardando stream'}</span>{token&&<button className="icon-button" title="Atualizar painel" aria-label="Atualizar painel" onClick={refresh} disabled={busy}><Icon name="refresh"/></button>}{token&&<button className="disconnect" onClick={disconnect}><Icon name="logout"/> Sair</button>}</div>
+    <div className="top-actions"><span className={'connection '+(connection==='online'?'connected':'')} role="status"><span className="dot"/>{!token?'Desconectado':connection==='online'?(desktopMode?'Sincronização ativa':'Tempo real ativo'):(desktopMode?'Aguardando API local':'Aguardando stream')}</span>{token&&<button className="icon-button" title="Atualizar painel" aria-label="Atualizar painel" onClick={refresh} disabled={busy}><Icon name="refresh"/></button>}{token&&<button className="disconnect" onClick={disconnect}><Icon name="logout"/> Sair</button>}</div>
    </header>
    {!token?<main className="login-wrap"><div className="login-card">
     <span className="login-icon"><Icon name="lock" size={28}/></span>
     <span className="eyebrow">ACESSO DE OPERADOR</span><h2>Conecte seu projeto</h2>
-    <p>Utilize um token Bearer de leitura emitido para seu projeto. A credencial permanece somente na memória desta aba; não é salva no navegador nem enviada para outros domínios.</p>
-    <form onSubmit={submit}><label htmlFor="access-token">Token de acesso</label><input id="access-token" type="password" autoComplete="off" spellCheck="false" required value={credential} onChange={e=>setCredential(e.target.value)} placeholder="odt_••••••••••••••••" aria-describedby="access-help"/><small id="access-help">Escopos necessários: projects:read, tasks:read e events:read.</small>
+    <p>{desktopMode?'Inscreva esta estação uma única vez. A chave fica no Gerenciador de Credenciais do Windows; tokens dos projetos nunca chegam à interface.':'Utilize um token Bearer de leitura emitido para seu projeto. A credencial permanece somente na memória desta aba; não é salva no navegador nem enviada para outros domínios.'}</p>
+    <form onSubmit={submit}><label htmlFor="access-token">{desktopMode?'Chave de inscrição da estação':'Token de acesso'}</label><input id="access-token" type="password" autoComplete="off" spellCheck="false" required value={credential} onChange={e=>setCredential(e.target.value)} placeholder={desktopMode?'ods_••••••••••••••••':'odt_••••••••••••••••'} aria-describedby="access-help"/><small id="access-help">{desktopMode?'Inscrição única, emissão temporária de acesso somente leitura por projeto autorizado.':'Escopos necessários: projects:read, tasks:read e events:read.'}</small>
     {error&&<p className="form-error" role="alert">{error}</p>}<button className="primary full" type="submit" disabled={busy}>{busy?'Conectando…':'Conectar com segurança'} <Icon name="arrow"/></button></form>
-    </div></main>:<main className="main" aria-live="off">
+    </div></main>:desktopMode&&!project?<main className="main"><section className="surface desktop-onboarding">
+      <span className="eyebrow">ESTAÇÃO AUTENTICADA</span><h2>Cadastre seu primeiro projeto</h2>
+      <p>Selecione uma pasta no Windows. O servidor validará a pasta contra as raízes explicitamente autorizadas; não são necessárias novas chaves por projeto.</p>
+      {error&&<p className="form-error" role="alert">{error}</p>}
+      <button className="primary" disabled={busy} onClick={registerFolder}>Escolher pasta do projeto</button>
+     </section></main>:<main className="main" aria-live="off">
     {error&&<div className="alert" role="alert">{error}<button aria-label="Fechar aviso" onClick={()=>setError('')}>×</button></div>}
     <div className="project-banner"><div className="project-mark"><Icon name="layers" size={22}/></div><div className="project-summary"><span className="eyebrow">PROJETO AUTORIZADO</span><h2>{project.name}</h2><span>ID {shortId(project.id)} · Acesso limitado ao projeto do token</span></div><div className="banner-right"> <span className="mini-label">DADOS DE ORIGEM</span><strong>PostgreSQL / API v1</strong><small>Última consulta: {fmtDate(lastRefresh)}</small></div></div>
+    {desktopMode&&<div className="desktop-projects"><label htmlFor="native-project">Projeto local</label><select id="native-project" value={project.id} onChange={e=>{void switchDesktop(e.target.value);}} disabled={busy}>{desktopProjects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><button type="button" className="secondary" disabled={busy} onClick={registerFolder}>Adicionar pasta…</button></div>}
     <OfficeWorld projectId={project.id} tasks={tasks} events={eventHistory} historyComplete={historyComplete} connection={connection} onInspectTask={inspectTask}/>
     {tasks.some(task=>['awaiting_approval','blocked','failed','changes_requested'].includes(task.status))&&<section className="intervention-panel" aria-label="Alertas de intervenção" role="region">
      <h2>Intervenção necessária</h2><p>Alertas baseados exclusivamente no estado persistido. Aprovações permanecem protegidas pelo fluxo S15.</p>

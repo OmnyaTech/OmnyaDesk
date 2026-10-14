@@ -1,4 +1,4 @@
-import Fastify,{type FastifyInstance,type FastifyRequest} from 'fastify';
+﻿import Fastify,{type FastifyInstance,type FastifyRequest} from 'fastify';
 import {readFile} from 'node:fs/promises';
 import swagger from '@fastify/swagger';
 import {ZodError} from 'zod';
@@ -14,6 +14,7 @@ import {TaskIntakeService,IntakeConflict,IntakeUnauthorized,IntakeForbidden,Inta
 import {GitIntegrationQueue,IntegrationConflict,IntegrationForbidden,IntegrationNotFound} from '../../../packages/db/src/git-integration.ts';
 import {GitValidationError} from '../../../packages/db/src/git-driver.ts';
 import {EvidenceIntegrityError,EvidenceLedger} from '../../../packages/db/src/evidence-ledger.ts';
+import {WorkstationRegistry} from '../../../packages/db/src/workstation.ts';
 
 const uuid={type:'string',format:'uuid'} as const;
 const projectParams={type:'object',required:['projectId'],additionalProperties:false,
@@ -35,6 +36,7 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
  const repo=new PostgresOfficeRepository(pool),flows=new TaskOrchestrator(pool),tokens=new TokenStore(pool);
  const hub=new ProjectSseHub(flows,tokens),intake=new TaskIntakeService(pool),scheduler=new ResourceScheduler(pool);
  const integrations=new GitIntegrationQueue(pool),evidence=new EvidenceLedger(pool);
+ const workstations=new WorkstationRegistry(pool);
  await api.register(swagger,{openapi:{
   info:{title:'OmnyaDesk Local API',version:'1.0.0-s11',description:'Local PostgreSQL API; no public exposure before security/release gates.'},
   components:{securitySchemes:{bearerToken:{type:'http',scheme:'bearer',bearerFormat:'opaque'}}},
@@ -43,7 +45,7 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
  // This protects future routes from inadvertently omitting a per-route authorization hook.
  api.addHook('onRequest',async(request)=>{
   const path=request.url.split('?')[0];
-  if(!path?.startsWith('/v1/')||path==='/v1/status')return;
+  if(!path?.startsWith('/v1/')||path==='/v1/status'||path.startsWith('/v1/workstation/'))return;
   const principal=await tokens.authenticate(request.headers.authorization);
   if(!principal)throw httpError(401,'Authentication required');
   (request as FastifyRequest & {principal?:AuthPrincipal}).principal=principal;
@@ -90,6 +92,38 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
     .send(bytes);
   });
  }
+ // Native-only loopback session: secrets never go to Tauri webview or browser storage.
+ // Non-cookie credentials plus strict Origin/Fetch-Metadata check prevent localhost CSRF.
+ const workstationGuard=async(req:FastifyRequest)=>{
+  const origin=req.headers.origin,site=req.headers['sec-fetch-site'],referer=req.headers.referer;
+  if(origin!==undefined||referer!==undefined||site!==undefined||
+   !['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.ip)||
+   !/^(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]{1,5})?$/.test(String(req.headers.host??'')))throw httpError(403,'Native localhost only');
+  const actor=await workstations.authenticate(req.headers.authorization);
+  if(!actor)throw httpError(401,'Invalid workstation session');
+  return actor;
+ };
+ api.get('/v1/workstation/projects',{schema:{hide:true}},async(req)=>{
+  const actor=await workstationGuard(req);
+  return {projects:await workstations.projects(actor.id)};
+ });
+ api.post<{Body:{path:string;name:string}}>('/v1/workstation/projects',{
+  schema:{hide:true,body:{type:'object',required:['path','name'],additionalProperties:false,
+   properties:{path:{type:'string',minLength:3,maxLength:2048},name:{type:'string',minLength:1,maxLength:140}}}}
+ },async(req,reply)=>{
+  const actor=await workstationGuard(req);
+  try{
+   const project=await workstations.register(actor,req.body,process.env.OMNYA_WORKSTATION_ALLOWED_ROOTS??'');
+   return reply.code(201).send({project});
+  }catch{return reply.code(403).send({error:'Folder is not authorized or already registered'});}
+ });
+ api.post<{Params:{projectId:string}}>('/v1/workstation/projects/:projectId/access',{
+  schema:{hide:true,params:projectParams}},async(req,reply)=>{
+   const actor=await workstationGuard(req);
+   const issued=await workstations.readonlyToken(actor,req.params.projectId);
+   if(!issued)return reply.code(404).send({error:'Project is not authorized'});
+   return reply.header('cache-control','no-store').send({token:issued.secret,expiresAt:issued.expiresAt});
+ });
  api.get('/openapi.json',{schema:{hide:true}},async()=>api.swagger());
  api.get('/v1/status',{schema:{tags:['system'],response:{200:{type:'object',properties:{ok:{type:'boolean'},mode:{type:'string'}}}}}},
   async()=>({ok:true,mode:'persistent-postgres-authenticated'}));
