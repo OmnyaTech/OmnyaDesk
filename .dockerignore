@@ -1,0 +1,14 @@
+.git
+.gitignore
+.nox
+node_modules
+**/node_modules
+dist
+**/dist
+tests
+.env
+.env.*
+**/*.log
+*.vsix
+coverage
+**/target

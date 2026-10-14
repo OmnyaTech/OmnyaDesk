@@ -1,0 +1,138 @@
+name: omnyadesk
+
+services:
+  db:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: omnyadesk
+      POSTGRES_DB: omnyadesk
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks: [backend]
+    mem_limit: 768m
+    cpus: 0.65
+    pids_limit: 128
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omnyadesk -d omnyadesk -h 127.0.0.1"]
+      interval: 8s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  api:
+    image: omnyadesk:s30-app
+    build:
+      context: ../..
+      dockerfile: infra/s30/Dockerfile
+      target: app
+    restart: unless-stopped
+    command: ["node", "dist/apps/api/src/main.js"]
+    environment:
+      OMNYA_HOST: "0.0.0.0"
+      OMNYA_DOCKER_PRIVATE: "1"
+      OMNYA_PORT: "4317"
+      DB_HOST: db
+      DB_NAME: omnyadesk
+      DB_USER: omnyadesk
+    secrets: [db_password]
+    depends_on:
+      db: {condition: service_healthy}
+    networks: [ingress, backend]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 640m
+    cpus: 0.70
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4317/v1/status').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 4s
+      retries: 12
+      start_period: 50s
+
+  worker:
+    image: omnyadesk:s30-app
+    restart: unless-stopped
+    command: ["node", "dist/apps/worker/src/main.js"]
+    environment:
+      DB_HOST: db
+      DB_NAME: omnyadesk
+      DB_USER: omnyadesk
+      WORKER_SIMULATED_MS: "100"
+    secrets: [db_password]
+    depends_on:
+      db: {condition: service_healthy}
+    networks: [backend]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    cpus: 0.50
+    pids_limit: 80
+    healthcheck:
+      test: ["CMD", "node", "-e", "const s=require('node:net').connect(5432,'db');s.on('connect',()=>{s.destroy();process.exit(0)}).on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),2000)"]
+      interval: 15s
+      timeout: 4s
+      retries: 6
+      start_period: 45s
+
+  web:
+    image: omnyadesk:s30-web
+    build:
+      context: ../..
+      dockerfile: infra/s30/Dockerfile
+      target: web
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
+    ports:
+      - "127.0.0.1:4387:8080"
+    networks: [ingress]
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - "/var/cache/nginx:rw,noexec,nosuid,size=16m,mode=1777"
+      - "/var/run:rw,noexec,nosuid,size=2m,mode=1777"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    cpus: 0.30
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 4s
+      retries: 10
+      start_period: 20s
+
+networks:
+  ingress:
+    driver: bridge
+    name: omnyadesk_ingress
+    ipam:
+      config:
+        - subnet: ${OMNYADESK_INGRESS_SUBNET:?Set external ingress CIDR}
+  backend:
+    driver: bridge
+    internal: true
+    name: omnyadesk_backend
+    ipam:
+      config:
+        - subnet: ${OMNYADESK_BACKEND_SUBNET:?Set external backend CIDR}
+
+volumes:
+  db_data:
+    name: omnyadesk_db_data
+
+secrets:
+  db_password:
+    file: ${OMNYADESK_SECRET_FILE:?Set OMNYADESK_SECRET_FILE to absolute external secret path}

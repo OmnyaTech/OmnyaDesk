@@ -1,5 +1,6 @@
 ﻿import Fastify,{type FastifyInstance,type FastifyRequest} from 'fastify';
 import {readFile} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
 import swagger from '@fastify/swagger';
 import {ZodError} from 'zod';
 import type {Pool} from 'pg';
@@ -447,9 +448,15 @@ export async function buildPersistentApi(pool:Pool):Promise<FastifyInstance>{
  return api;
 }
 
+export function allowedApiBind(host:string,privateDockerOptIn:boolean,dockerMarker:boolean):boolean{
+ return host==='127.0.0.1'||host==='::1'||
+  (host==='0.0.0.0'&&privateDockerOptIn&&dockerMarker);
+}
+
 export async function servePersistentApi():Promise<void>{
  const host=process.env.OMNYA_HOST??'127.0.0.1';
- if(host!=='127.0.0.1'&&host!=='::1')throw Error('S07 API is LOCAL ONLY; public bind prohibited');
+ if(!allowedApiBind(host,process.env.OMNYA_DOCKER_PRIVATE==='1',existsSync('/.dockerenv')))
+  throw Error('API bind blocked: loopback only, except explicitly opted-in private Docker container');
  const port=Number(process.env.OMNYA_PORT??4317);
  const pool=createPool(process.env.DATABASE_URL??'');
  await runMigrations(pool);
