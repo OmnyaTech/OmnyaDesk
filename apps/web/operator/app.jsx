@@ -91,6 +91,24 @@ function Icon({name,size=18}){const shapes={
  };return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{shapes[name]}</svg>;}
 function App(){
  const [credential,setCredential]=useState('');
+ const [windowPrefs,setWindowPrefs]=useState({mode:'full',alwaysOnTop:false});
+ const [windowActionBusy,setWindowActionBusy]=useState(false);
+ useEffect(()=>{if(!desktopMode)return;
+  let alive=true;
+  desktopInvoke('desktop_window_state').then(data=>{if(alive&&data?.mode)setWindowPrefs(data);}).catch(()=>{});
+  return()=>{alive=false;};
+ },[]);
+ useEffect(()=>{
+  if(!desktopMode)return;
+  document.documentElement.dataset.officeMode=windowPrefs.mode;
+  return()=>{delete document.documentElement.dataset.officeMode;};
+ },[windowPrefs.mode]);
+ const desktopWindowAction=async(command,args={})=>{
+  setWindowActionBusy(true);setError('');
+  try{const value=await desktopInvoke(command,args);if(value?.mode)setWindowPrefs(value);}
+  catch(e){setError(displayError(e));}
+  finally{setWindowActionBusy(false);}
+ };
  const [desktopProjects,setDesktopProjects]=useState([]);
  const [token,setToken]=useState(null),[project,setProject]=useState(null);
  const [tasks,setTasks]=useState([]),[events,setEvents]=useState([]);
@@ -242,7 +260,11 @@ function App(){
   </aside>
   <div className="workspace">
    <header className="topbar"><div><span className="eyebrow">OMNYATECH / OPERAÇÕES</span><h1 id="overview">Painel operacional <span className="h1-star">✦</span></h1><p>Visibilidade real de projetos, execuções e evidências auditáveis.</p></div>
-    <div className="top-actions"><span className={'connection '+(connection==='online'?'connected':'')} role="status"><span className="dot"/>{!token?'Desconectado':connection==='online'?(desktopMode?'Sincronização ativa':'Tempo real ativo'):(desktopMode?'Aguardando API local':'Aguardando stream')}</span>{token&&<button className="icon-button" title="Atualizar painel" aria-label="Atualizar painel" onClick={refresh} disabled={busy}><Icon name="refresh"/></button>}{token&&<button className="disconnect" onClick={disconnect}><Icon name="logout"/> Sair</button>}</div>
+    <div className="top-actions">{desktopMode&&<div className="desktop-window-controls" role="group" aria-label="Modos da janela do OmnyaDesk">
+     {[['full','Completo'],['floating','Flutuante'],['taskbar','Faixa']].map(([mode,name])=><button key={mode} type="button" className={windowPrefs.mode===mode?'active':''} aria-pressed={windowPrefs.mode===mode} disabled={windowActionBusy} onClick={()=>desktopWindowAction('desktop_window_mode',{mode})}>{name}</button>)}
+     <button type="button" className={windowPrefs.alwaysOnTop?'active':''} aria-pressed={windowPrefs.alwaysOnTop} disabled={windowActionBusy} onClick={()=>desktopWindowAction('desktop_always_on_top',{enabled:!windowPrefs.alwaysOnTop})}>Sempre no topo</button>
+     <button type="button" onClick={()=>desktopWindowAction('desktop_minimize_to_tray')} disabled={windowActionBusy}>Bandeja</button>
+    </div>}<span className={'connection '+(connection==='online'?'connected':'')} role="status"><span className="dot"/>{!token?'Desconectado':connection==='online'?(desktopMode?'Sincronização ativa':'Tempo real ativo'):(desktopMode?'Aguardando API local':'Aguardando stream')}</span>{token&&<button className="icon-button" title="Atualizar painel" aria-label="Atualizar painel" onClick={refresh} disabled={busy}><Icon name="refresh"/></button>}{token&&<button className="disconnect" onClick={disconnect}><Icon name="logout"/> Sair</button>}</div>
    </header>
    {!token?<main className="login-wrap"><div className="login-card">
     <span className="login-icon"><Icon name="lock" size={28}/></span>

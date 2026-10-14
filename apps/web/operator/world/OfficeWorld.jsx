@@ -180,10 +180,18 @@ export function OfficeWorld({projectId,tasks=[],events=[],historyComplete=true,c
    parent:host.current,width:940,height:450,transparent:false,
    backgroundColor:'#14273a',
    render:{pixelArt:true,antialias:false},
+   fps:{target:24,min:10,forceSetTimeOut:true}, // S25: idle budget; state animations remain canonical.
    scale:{mode:Phaser.Scale.FIT,autoCenter:Phaser.Scale.CENTER_BOTH,width:940,height:450},
    scene:[office],input:{mouse:{preventDefaultWheel:true}}});
   game.current=instance;
-  return()=>{alive=false;scene.current=null;game.current=null;instance.destroy(true);};
+  // Hidden/minimized window consumes no Phaser scene updates; backend state still reloads on restore.
+  const visibility=()=>{
+   if(document.hidden)instance.scene.pause('OmnyaOffice');
+   else instance.scene.resume('OmnyaOffice');
+  };
+  document.addEventListener('visibilitychange',visibility);
+  return()=>{document.removeEventListener('visibilitychange',visibility);
+   alive=false;scene.current=null;game.current=null;instance.destroy(true);};
  },[]);
  useEffect(()=>{if(ready)scene.current?.applyProjection(projection);},[ready,projectId,tasks,events,historyComplete,connection]);
  const applyZoom=delta=>{

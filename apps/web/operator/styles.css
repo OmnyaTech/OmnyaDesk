@@ -18,3 +18,32 @@
 .intervention-panel{margin:20px 0;border:1px solid #76562d;border-radius:12px;background:#30271d;padding:18px 22px}.intervention-panel h2{margin:0 0 7px;font-size:17px;color:#ffe0a5}.intervention-panel p{font-size:12px;color:#d6bf9d}.intervention-panel ul{list-style:none;padding:0;margin:12px 0 0}.intervention-panel li{display:flex;align-items:center;flex-wrap:wrap;gap:12px;border-top:1px solid #635039;padding:12px 0;overflow-wrap:anywhere}.intervention-panel li span:nth-child(2){flex:1;min-width:160px}.intervention-panel button,.world-inspect{padding:9px 12px;border:1px solid #5984a9;background:#203e57;color:#e0f1ff;border-radius:8px;font-weight:650}.intervention-panel button:hover,.world-inspect:hover{background:#315a77}
 
 .desktop-onboarding{padding:28px;max-width:720px;margin:35px auto}.desktop-onboarding p{color:#a0b5d0;line-height:1.6}.desktop-projects{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:16px 0;padding:13px;background:#101e33;border:1px solid #29435f;border-radius:12px}.desktop-projects select{color:#d5e4f7;background:#101d30;padding:10px;border-radius:8px}.desktop-projects button{margin-left:auto}
+
+/* S25 -- desktop-only window modes: browser operator remains untouched. */
+.desktop-window-controls{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.desktop-window-controls button{border:1px solid #38516d;border-radius:8px;background:#18253b;color:#b9d3ef;padding:8px 9px;font-size:11px;white-space:nowrap}
+.desktop-window-controls button.active{border-color:#529af1;background:#27558a;color:#fff}
+.desktop-window-controls button:focus-visible{outline:2px solid #8ec5ff;outline-offset:2px}
+html[data-office-mode=floating] .rail,html[data-office-mode=taskbar] .rail{display:none}
+html[data-office-mode=floating] .topbar,html[data-office-mode=taskbar] .topbar{padding:10px 14px;gap:12px}
+html[data-office-mode=floating] .topbar h1,html[data-office-mode=taskbar] .topbar h1{font-size:16px;margin:2px 0}
+html[data-office-mode=floating] .topbar p,html[data-office-mode=taskbar] .topbar p,html[data-office-mode=taskbar] .topbar .eyebrow{display:none}
+html[data-office-mode=floating] .main{padding:12px}
+html[data-office-mode=floating] .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+html[data-office-mode=floating] .content-grid{grid-template-columns:1fr}
+html[data-office-mode=taskbar] .topbar{align-items:center}
+html[data-office-mode=taskbar] .topbar .eyebrow,html[data-office-mode=taskbar] .topbar p,
+html[data-office-mode=taskbar] .project-banner,html[data-office-mode=taskbar] .metrics,
+html[data-office-mode=taskbar] .content-grid,html[data-office-mode=taskbar] .footer,
+html[data-office-mode=taskbar] .world-surface .surface-heading,
+html[data-office-mode=taskbar] .world-surface .world-toolbar,
+html[data-office-mode=taskbar] .world-surface .world-roles,
+html[data-office-mode=taskbar] .world-surface .world-note,
+html[data-office-mode=taskbar] .desktop-projects,
+html[data-office-mode=taskbar] .intervention-panel{display:none}
+html[data-office-mode=taskbar] .main{padding:5px 14px}
+html[data-office-mode=taskbar] .world-surface{height:142px}
+html[data-office-mode=taskbar] .world-view{height:140px;min-height:140px;overflow:hidden}
+html[data-office-mode=taskbar] .world-view canvas{max-width:100%;max-height:140px}
+html[data-office-mode=taskbar] .topbar .connection{padding:6px 8px}
+@media(max-width:1150px){.topbar:has(.desktop-window-controls){flex-wrap:wrap}}

@@ -27,6 +27,7 @@ try{
  const page=await browser.newPage({viewport:{width:1360,height:900},serviceWorkers:'block'});
  await page.addInitScript(({projects,taskIds,now})=>{
   let enrolled=false,registered=[],active=null,offline=false,phase='planning';
+  let prefs={mode:'full',alwaysOnTop:false},minimized=false;
   const histories=projects.map((p,i)=>[
    {schemaVersion:1,sequence:1,eventId:p.id,projectId:p.id,taskId:taskIds[i],type:'task.created',occurredAt:now,actor:{kind:'system'}},
    {schemaVersion:1,sequence:2,eventId:p.id,projectId:p.id,taskId:taskIds[i],type:'task.status_changed',occurredAt:now,
@@ -38,12 +39,20 @@ try{
   let calls=[];
   window.__testDesktop={
    setOffline:v=>{offline=v;},calls:()=>calls.slice(),
+   windowState:()=>({prefs,minimized}),
    transition:()=>{phase='implementing';histories[0].push({schemaVersion:1,sequence:3,
     eventId:projects[0].id,projectId:projects[0].id,taskId:taskIds[0],type:'task.status_changed',
     occurredAt:now,actor:{kind:'system'},payload:{from:'planning',to:'implementing'}});}
   };
   window.__TAURI__={core:{invoke:async(command,args={})=>{
    calls.push(command);
+   if(command==='desktop_window_state')return prefs;
+   if(command==='desktop_window_mode'){
+    if(!['full','floating','taskbar'].includes(args.mode))throw 'Unknown mode';
+    prefs={...prefs,mode:args.mode};return prefs;
+   }
+   if(command==='desktop_always_on_top'){prefs={...prefs,alwaysOnTop:!!args.enabled};return prefs;}
+   if(command==='desktop_minimize_to_tray'){minimized=true;return null;}
    if(command==='desktop_restore'){if(!enrolled)throw Error('Not enrolled');return {projects:registered};}
    if(command==='desktop_login'){
     if(args.value==='ods_'+'b'.repeat(64))throw 'Workstation session is invalid or expired';
@@ -83,6 +92,18 @@ try{
  page.on('request',req=>{if(req.url().includes('/v1/'))outbound.push(req.url());});
  await page.goto('http://127.0.0.1:'+port+'/',{waitUntil:'load'});
  await page.getByRole('heading',{name:'Conecte seu projeto'}).waitFor();
+ // S25: modes, tray, native always-on-top command and compact responsive UI.
+ await page.getByRole('button',{name:'Flutuante'}).click();
+ await page.locator('html[data-office-mode="floating"]').waitFor();
+ await page.getByRole('button',{name:'Faixa'}).click();
+ await page.locator('html[data-office-mode="taskbar"]').waitFor();
+ assert.equal(await page.locator('.rail').evaluate(el=>getComputedStyle(el).display),'none');
+ await page.getByRole('button',{name:'Sempre no topo'}).click();
+ assert.equal(await page.evaluate(()=>window.__testDesktop.windowState().prefs.alwaysOnTop),true);
+ await page.getByRole('button',{name:'Completo'}).click();
+ await page.locator('html[data-office-mode="full"]').waitFor();
+ await page.getByRole('button',{name:'Bandeja'}).click();
+ assert.equal(await page.evaluate(()=>window.__testDesktop.windowState().minimized),true);
  await page.getByLabel('Chave de inscrição da estação').fill('ods_'+'b'.repeat(64));
  await page.getByRole('button',{name:'Conectar com segurança'}).click();
  await page.getByRole('alert').getByText('A inscrição da estação foi recusada ou expirou. Use uma nova chave de inscrição válida.').waitFor();

@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
+mod window_modes;
 
 const API: &str = "http://127.0.0.1:4317";
 const VAULT: &str = "tech.omnya.desk.workstation";
@@ -259,6 +260,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Session::default())
+        .setup(|app| window_modes::setup(app).map_err(Into::into))
         .invoke_handler(tauri::generate_handler![
             desktop_restore,
             desktop_login,
@@ -266,7 +268,11 @@ fn main() {
             desktop_select,
             desktop_read,
             desktop_poll,
-            desktop_logout
+            desktop_logout,
+            window_modes::desktop_window_state,
+            window_modes::desktop_window_mode,
+            window_modes::desktop_always_on_top,
+            window_modes::desktop_minimize_to_tray
         ])
         .run(tauri::generate_context!())
         .expect("OmnyaDesk desktop failed");
@@ -307,14 +313,25 @@ mod tests {
     #[test]
     fn windows_vault_roundtrip_uses_isolated_test_entry() {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let service = format!("tech.omnya.desk.qa.{}.{}", std::process::id(), nonce);
         let vault = keyring::Entry::new(&service, "test-only").expect("OS vault available");
         let synthetic = format!("ods_{}", "a".repeat(64));
-        vault.set_password(&synthetic).expect("OS stores synthetic test secret");
+        vault
+            .set_password(&synthetic)
+            .expect("OS stores synthetic test secret");
         let actual = vault.get_password();
         let cleanup = vault.delete_credential();
-        assert!(cleanup.is_ok(), "Synthetic OS credential must be cleaned up");
-        assert_eq!(actual.expect("OS retrieves synthetic test secret"), synthetic);
+        assert!(
+            cleanup.is_ok(),
+            "Synthetic OS credential must be cleaned up"
+        );
+        assert_eq!(
+            actual.expect("OS retrieves synthetic test secret"),
+            synthetic
+        );
     }
 }
