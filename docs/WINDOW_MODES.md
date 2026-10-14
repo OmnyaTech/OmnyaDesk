@@ -17,3 +17,9 @@ Os testes incluem parser de modos nativos, geometria de monitor secundário com 
 O hardware de referência possui apenas uma tela conectada; **não é exigida a compra de um segundo monitor**. A S25 é avaliada por uma combinação de testes de janela Windows real em um monitor e testes determinísticos de topologia virtual na própria implementação Rust. A bateria `cargo test --locked` cobre (1) desktop virtual com coordenadas negativas, (2) segunda tela à esquerda/direita, (3) diferenças de resolução/DPI, (4) desconexão do segundo monitor com retorno centralizado na tela principal e (5) preservação do modo e da opção sempre-no-topo. O código de startup seleciona o monitor salvo somente se ainda existir; caso contrário reposiciona a janela no monitor principal.
 
 A validação física em dois monitores **permanece não executada**, registrada como ressalva de QA para um ambiente com hardware futuro. Ela não deve bloquear as entregas utilizáveis no hardware disponível nem pode ser descrita como teste real executado. Manter um teste adicional de compatibilidade de dois monitores no backlog de regressão quando essa infraestrutura estiver disponível.
+
+## Distribuição local da versão correta (pós-S25)
+
+A compilação do projeto **não atualiza automaticamente** uma janela Tauri aberta de sprints anteriores. Após gerar o binário Windows com pnpm run desktop:build, instale a versão reconstruída usando: powershell -ExecutionPolicy Bypass -File scripts/install-desktop-local.ps1 -SourceExe dist/apps/desktop-bin/omnyadesk-desktop.exe -Launch.
+
+Esse instalador copia o EXE para %LOCALAPPDATA%/Programs/OmnyaDesk/OmnyaDesk.exe, verifica SHA-256 e atualiza os atalhos OmnyaDesk da Área de Trabalho e do menu Iniciar. Não modifica o cofre de credenciais, sessões, PostgreSQL nem arquivos dos projetos. A instalação não ocorre automaticamente apenas por aprovar uma sprint. A janela de QA anterior em C:/OmnyaDeskS24QA não deve ser utilizada como atalho final.

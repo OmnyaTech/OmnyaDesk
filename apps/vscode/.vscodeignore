@@ -1,0 +1,8 @@
+src/**
+node_modules/**
+*.ts
+*.tsx
+tsconfig.json
+dist/*.png
+dist/*.map
+.vscode/**

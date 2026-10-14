@@ -28,6 +28,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc -p tsconfig.build.json && node scripts/copy-web.mjs",
     "desktop:assets": "node scripts/build-desktop.mjs",
+    "vscode:build": "node scripts/build-vscode.mjs",
+    "vscode:test": "node scripts/build-vscode.mjs && node scripts/smoke-vscode.mjs",
+    "vscode:check-host": "node scripts/smoke-vscode.mjs --host-only",
     "desktop:build": "node scripts/build-desktop.mjs && node scripts/package-desktop.mjs",
     "desktop:smoke": "node scripts/build-desktop.mjs && node scripts/smoke-desktop-webview.mjs",
     "smoke:build": "node scripts/smoke-built.mjs",
@@ -45,7 +48,7 @@
     "smoke:operator": "node scripts/smoke-operator.mjs",
     "smoke:world": "node scripts/smoke-office-world.mjs",
     "smoke:projection": "node scripts/smoke-office-projection.mjs",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run smoke:build && pnpm run smoke:worker && pnpm run smoke:auth && pnpm run smoke:sse && pnpm run smoke:mcp && pnpm run smoke:scheduler && pnpm run smoke:git && pnpm run smoke:sandbox && pnpm run smoke:tools && pnpm run smoke:provider && pnpm run smoke:four-role && pnpm run smoke:resilience && pnpm run smoke:operator && pnpm run smoke:world && pnpm run smoke:projection"
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run smoke:build && pnpm run smoke:worker && pnpm run smoke:auth && pnpm run smoke:sse && pnpm run smoke:mcp && pnpm run smoke:scheduler && pnpm run smoke:git && pnpm run smoke:sandbox && pnpm run smoke:tools && pnpm run smoke:provider && pnpm run smoke:four-role && pnpm run smoke:resilience && pnpm run smoke:operator && pnpm run smoke:world && pnpm run smoke:projection && pnpm run vscode:build && pnpm run vscode:check-host"
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",

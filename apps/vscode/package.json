@@ -1,0 +1,57 @@
+{
+  "name": "omnyadesk-vscode",
+  "displayName": "OmnyaDesk — Escritório",
+  "publisher": "omnyatech",
+  "version": "0.1.0",
+  "repository": {"type":"git","url":"https://github.com/OmnyaTech/OmnyaDesk.git"},
+  "description": "Escritório 2D OmnyaDesk no VS Code; acesso local somente leitura e credenciais no SecretStorage.",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:omnyadesk.openOffice",
+    "onCommand:omnyadesk.configureToken",
+    "onCommand:omnyadesk.disconnect"
+  ],
+  "main": "./dist/extension.cjs",
+  "contributes": {
+    "commands": [
+      {
+        "command": "omnyadesk.openOffice",
+        "title": "OmnyaDesk: Abrir escritório"
+      },
+      {
+        "command": "omnyadesk.configureToken",
+        "title": "OmnyaDesk: Configurar token de leitura"
+      },
+      {
+        "command": "omnyadesk.disconnect",
+        "title": "OmnyaDesk: Remover credencial local"
+      }
+    ],
+    "configuration": {
+      "title": "OmnyaDesk",
+      "properties": {
+        "omnyadesk.apiPort": {
+          "type": "integer",
+          "default": 4317,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Porta da API OmnyaDesk no loopback 127.0.0.1. Nenhum servidor remoto é permitido."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/build-vscode.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {"react":"19.2.0","react-dom":"19.2.0","phaser":"3.90.0"},
+  "devDependencies": {
+    "@types/vscode": "1.105.0"
+  }
+}
