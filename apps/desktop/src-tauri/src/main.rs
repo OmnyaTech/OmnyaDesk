@@ -303,4 +303,18 @@ mod tests {
         assert!(!is_workstation_secret(&format!("odt_{}", "a".repeat(64))));
         assert!(!is_workstation_secret(&format!("ods_{}", "A".repeat(64))));
     }
+    #[cfg(windows)]
+    #[test]
+    fn windows_vault_roundtrip_uses_isolated_test_entry() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let service = format!("tech.omnya.desk.qa.{}.{}", std::process::id(), nonce);
+        let vault = keyring::Entry::new(&service, "test-only").expect("OS vault available");
+        let synthetic = format!("ods_{}", "a".repeat(64));
+        vault.set_password(&synthetic).expect("OS stores synthetic test secret");
+        let actual = vault.get_password();
+        let cleanup = vault.delete_credential();
+        assert!(cleanup.is_ok(), "Synthetic OS credential must be cleaned up");
+        assert_eq!(actual.expect("OS retrieves synthetic test secret"), synthetic);
+    }
 }
