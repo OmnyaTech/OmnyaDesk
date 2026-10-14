@@ -456,7 +456,7 @@ export function allowedApiBind(host:string,privateDockerOptIn:boolean,dockerMark
 export async function servePersistentApi():Promise<void>{
  const host=process.env.OMNYA_HOST??'127.0.0.1';
  if(!allowedApiBind(host,process.env.OMNYA_DOCKER_PRIVATE==='1',existsSync('/.dockerenv')))
-  throw Error('API bind blocked: loopback only, except explicitly opted-in private Docker container');
+  throw Error('S07 API is LOCAL ONLY; a private Docker bind requires explicit opt-in inside the container');
  const port=Number(process.env.OMNYA_PORT??4317);
  const pool=createPool(process.env.DATABASE_URL??'');
  await runMigrations(pool);
