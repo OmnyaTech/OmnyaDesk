@@ -93,3 +93,8 @@ Issues, documentation improvements and small, well-tested pull requests are welc
 O **OmnyaDesk** é um projeto open source de portfólio para orquestração de agentes de desenvolvimento, com motor transacional, filas, Git isolado e execução limitada de ferramentas. **O escritório visual em pixel art ainda faz parte do planejamento.** Para testar agora, siga o início rápido acima; nenhuma conta ou servidor privado é necessária. Para usar PostgreSQL, o script de instalação cria automaticamente credenciais locais que não são versionadas.
 
 **Status do código publicado:** snapshot técnico aprovado até a S13. Implementações posteriores são publicadas apenas após revisão e testes próprios.
+
+---
+
+<sub>Desenvolvido por <a href="https://github.com/Yan-Oliv">Yan Monteiro</a> · <a href="https://www.linkedin.com/in/yan-de-oliveira-gon%C3%A7alves-monteiro-a2886619a/">LinkedIn</a> · <a href="https://github.com/OmnyaTech">OmnyaTech</a></sub>
+
